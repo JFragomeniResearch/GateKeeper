@@ -138,6 +138,55 @@ class GateKeeper:
 
         self.logger.info(f"Results saved to {filename}")
 
+    def display_disclaimer(self) -> bool:
+        """
+        Display legal disclaimer and require user acknowledgment.
+        Returns True if user accepts, False if declined.
+        """
+        disclaimer = """
+╔════════════════════ LEGAL DISCLAIMER ════════════════════╗
+║                                                          ║
+║  WARNING: This is a network security testing tool.       ║
+║                                                          ║
+║  By proceeding, you confirm that:                       ║
+║                                                         ║
+║  1. You have EXPLICIT PERMISSION to scan the target     ║
+║     network/system                                      ║
+║                                                         ║
+║  2. You understand that unauthorized scanning may be     ║
+║     ILLEGAL in your jurisdiction                        ║
+║                                                         ║
+║  3. You accept ALL RESPONSIBILITY for the use of this   ║
+║     tool                                                ║
+║                                                         ║
+║  4. You will use this tool in accordance with all       ║
+║     applicable laws and regulations                     ║
+║                                                         ║
+╚══════════════════════════════════════════════════════════╝
+"""
+        print(disclaimer)
+        
+        # Log the disclaimer display
+        self.logger.info("Legal disclaimer displayed to user")
+        
+        try:
+            # Ask for explicit confirmation
+            confirmation = input("\nDo you accept these terms? (yes/no): ").lower().strip()
+            
+            if confirmation == 'yes':
+                self.logger.info("User accepted legal disclaimer")
+                print("\nDisclaimer accepted. Proceeding with scan...\n")
+                return True
+            else:
+                self.logger.warning("User declined legal disclaimer")
+                print("\nDisclaimer not accepted. Exiting program.")
+                return False
+            
+        except KeyboardInterrupt:
+            self.logger.warning("User interrupted disclaimer prompt")
+            print("\nOperation cancelled by user.")
+            return False
+
 def main():
     parser = argparse.ArgumentParser(description='GateKeeper Network Scanner')
     parser.add_argument('-t', '--target', required=True, help='Target hostname or IP')
