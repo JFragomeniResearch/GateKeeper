@@ -199,7 +199,10 @@ def main():
     args = parser.parse_args()
     
     scanner = GateKeeper()
-    scanner.display_disclaimer()
+    
+    # Check disclaimer acceptance
+    if not scanner.display_disclaimer():
+        sys.exit(1)
     
     if not scanner.verify_dns(args.target):
         sys.exit(1)
