@@ -12,6 +12,7 @@ import dns.resolver  # for DNS verification
 from cryptography.fernet import Fernet  # for encryption
 import json
 from typing import List, Tuple, Dict, Optional
+from utils.banner import display_banner, display_scan_start, display_scan_complete
 
 class GateKeeper:
     def __init__(self):
@@ -188,6 +189,9 @@ class GateKeeper:
             return False
 
 def main():
+    # Display the banner first
+    display_banner()
+    
     parser = argparse.ArgumentParser(description='GateKeeper Network Scanner')
     parser.add_argument('-t', '--target', required=True, help='Target hostname or IP')
     parser.add_argument('-p', '--ports', required=True, help='Port range (e.g., 1-1024)')
@@ -200,12 +204,13 @@ def main():
     
     scanner = GateKeeper()
     
-    # Check disclaimer acceptance
     if not scanner.display_disclaimer():
         sys.exit(1)
     
-    if not scanner.verify_dns(args.target):
-        sys.exit(1)
+    # Display scan start information
+    display_scan_start(args.target, args.ports)
+    
+    start_time = time.time()
     
     # Parse port range
     try:
@@ -232,6 +237,10 @@ def main():
             if result:
                 results.append(result)
 
+    # After scanning is complete
+    scan_duration = time.time() - start_time
+    display_scan_complete(scan_duration)
+    
     # Save results
     scanner.save_results(results, encrypt=args.encrypt)
 
