@@ -68,6 +68,9 @@ class GateKeeper:
 
     async def scan_port(self, port: int) -> Optional[Dict]:
         """Scan a single port with rate limiting and timeout"""
+        if not 0 <= port <= 65535:
+            raise ValueError(f"Port number must be between 0 and 65535, got {port}")
+        
         try:
             # Implement rate limiting
             time.sleep(self.rate_limit)
