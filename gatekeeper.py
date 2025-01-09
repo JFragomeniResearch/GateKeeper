@@ -121,16 +121,18 @@ class GateKeeper:
     def save_results(self, results: List[Dict], encrypt: bool = False) -> None:
         """Save scan results to file"""
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        report_dir = Path('reports')
-        report_dir.mkdir(exist_ok=True)
+        
+        # Ensure reports directory exists
+        self.reports_dir = Path('reports')
+        self.reports_dir.mkdir(exist_ok=True)
         
         if encrypt:
+            filename = self.reports_dir / f'scan_results_{timestamp}.encrypted'
             encrypted_data = self.encrypt_results(results)
-            filename = report_dir / f'scan_results_{timestamp}.encrypted'
             with open(filename, 'wb') as f:
                 f.write(encrypted_data)
         else:
-            filename = report_dir / f'scan_results_{timestamp}.txt'
+            filename = self.reports_dir / f'scan_results_{timestamp}.txt'
             with open(filename, 'w') as f:
                 f.write(f"GateKeeper Scan Results\n")
                 f.write(f"Target: {self.target}\n")
