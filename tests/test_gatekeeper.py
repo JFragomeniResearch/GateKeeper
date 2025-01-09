@@ -19,6 +19,12 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from gatekeeper import GateKeeper
 
+def async_test(coro):
+    def wrapper(*args, **kwargs):
+        loop = asyncio.get_event_loop()
+        return loop.run_until_complete(coro(*args, **kwargs))
+    return wrapper
+
 class TestGateKeeper(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -175,33 +181,44 @@ class TestGateKeeper(unittest.TestCase):
 
     def test_setup_logging(self):
         """Test logging configuration."""
-        logger = self.scanner._setup_logging()
-        self.assertEqual(logger.name, 'GateKeeper')
-        self.assertEqual(logger.level, logging.INFO)
-        
-        # Test log file creation
-        log_file = Path('logs/gatekeeper.log')
-        self.assertTrue(log_file.exists())
-        
-        # Test logging functionality
-        test_message = "Test log message"
-        logger.info(test_message)
-        
-        with open(log_file, 'r') as f:
-            log_content = f.read()
-            self.assertIn(test_message, log_content)
+        # Create a temporary directory for logs
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = Path(tmpdir) / 'test.log'
+            
+            # Mock the log file path
+            with patch('pathlib.Path') as mock_path:
+                mock_path.return_value.parent.mkdir = Mock()
+                mock_path.return_value = log_path
+                
+                logger = self.scanner._setup_logging()
+                
+                # Verify logger configuration
+                self.assertEqual(logger.name, 'GateKeeper')
+                self.assertEqual(logger.level, logging.INFO)
+                
+                # Test logging functionality
+                test_message = "Test log message"
+                logger.info(test_message)
+                
+                # Verify log file contents
+                with open(log_path, 'r') as f:
+                    log_content = f.read()
+                    self.assertIn(test_message, log_content)
 
-    def test_rate_limiting(self):
+    @async_test
+    async def test_rate_limiting(self):
         """Test rate limiting functionality."""
         start_time = time.time()
         
-        # Test scanning multiple ports
+        # Test scanning multiple ports with rate limiting
         ports = [80, 443, 8080]
-        async def scan_multiple_ports():
+        
+        # Mock socket to avoid actual network calls
+        with patch('socket.socket') as mock_socket:
+            mock_socket.return_value.connect_ex.return_value = 0
+            
             for port in ports:
                 await self.scanner.scan_port(port)
-        
-        self.loop.run_until_complete(scan_multiple_ports())
         
         elapsed_time = time.time() - start_time
         minimum_expected_time = len(ports) * self.scanner.rate_limit
