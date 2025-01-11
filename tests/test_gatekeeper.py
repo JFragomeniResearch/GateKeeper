@@ -21,8 +21,13 @@ from gatekeeper import GateKeeper
 
 def async_test(coro):
     def wrapper(*args, **kwargs):
-        loop = asyncio.get_event_loop()
-        return loop.run_until_complete(coro(*args, **kwargs))
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            return loop.run_until_complete(coro(*args, **kwargs))
+        finally:
+            loop.close()
+            asyncio.set_event_loop(None)
     return wrapper
 
 class TestGateKeeper(unittest.TestCase):
@@ -153,44 +158,52 @@ class TestGateKeeper(unittest.TestCase):
         """Test saving scan results to file."""
         # Create temporary directory for test files
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Override reports directory
-            self.scanner.reports_dir = Path(tmpdir)
+            temp_dir = Path(tmpdir)
+            
+            # Create a test-specific GateKeeper instance
+            test_scanner = GateKeeper()
+            test_scanner.target = "test.com"  # Set a target for the report
             
             test_results = [
-                {'port': 80, 'status': 'open', 'service': 'HTTP', 
+                {'port': 80, 'status': 'open', 'service': 'HTTP',
                  'timestamp': datetime.now().isoformat()},
                 {'port': 443, 'status': 'open', 'service': 'HTTPS',
                  'timestamp': datetime.now().isoformat()}
             ]
             
-            # Test plain text save
-            self.scanner.save_results(test_results, encrypt=False)
-            saved_files = list(Path(tmpdir).glob('scan_results_*.txt'))
-            self.assertEqual(len(saved_files), 1)
-            
-            # Verify file contents
-            with open(saved_files[0], 'r') as f:
-                content = f.read()
-                self.assertIn('Port 80: HTTP', content)
-                self.assertIn('Port 443: HTTPS', content)
-            
-            # Test encrypted save
-            self.scanner.save_results(test_results, encrypt=True)
-            encrypted_files = list(Path(tmpdir).glob('scan_results_*.encrypted'))
-            self.assertEqual(len(encrypted_files), 1)
+            # Patch the reports directory path
+            with patch.object(test_scanner, 'reports_dir', temp_dir):
+                # Test plain text save
+                test_scanner.save_results(test_results, encrypt=False)
+                saved_files = list(temp_dir.glob('scan_results_*.txt'))
+                self.assertEqual(len(saved_files), 1)
+                
+                # Verify file contents
+                with open(saved_files[0], 'r') as f:
+                    content = f.read()
+                    self.assertIn('Port 80: HTTP', content)
+                    self.assertIn('Port 443: HTTPS', content)
+                
+                # Test encrypted save
+                test_scanner.save_results(test_results, encrypt=True)
+                encrypted_files = list(temp_dir.glob('scan_results_*.encrypted'))
+                self.assertEqual(len(encrypted_files), 1)
 
     def test_setup_logging(self):
         """Test logging configuration."""
         # Create a temporary directory for logs
         with tempfile.TemporaryDirectory() as tmpdir:
-            log_path = Path(tmpdir) / 'test.log'
+            temp_dir = Path(tmpdir)
+            log_file = temp_dir / 'gatekeeper.log'
             
-            # Mock the log file path
-            with patch('pathlib.Path') as mock_path:
+            # Create a test-specific GateKeeper instance
+            test_scanner = GateKeeper()
+            
+            # Patch the log file path
+            with patch('pathlib.Path', return_value=log_file) as mock_path:
                 mock_path.return_value.parent.mkdir = Mock()
-                mock_path.return_value = log_path
                 
-                logger = self.scanner._setup_logging()
+                logger = test_scanner._setup_logging()
                 
                 # Verify logger configuration
                 self.assertEqual(logger.name, 'GateKeeper')
@@ -200,8 +213,12 @@ class TestGateKeeper(unittest.TestCase):
                 test_message = "Test log message"
                 logger.info(test_message)
                 
-                # Verify log file contents
-                with open(log_path, 'r') as f:
+                # Wait a brief moment for log writing
+                time.sleep(0.1)
+                
+                # Verify log file exists and contains the message
+                self.assertTrue(log_file.exists())
+                with open(log_file, 'r') as f:
                     log_content = f.read()
                     self.assertIn(test_message, log_content)
 
