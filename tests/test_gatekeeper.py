@@ -196,13 +196,10 @@ class TestGateKeeper(unittest.TestCase):
             # Create a test-specific GateKeeper instance
             test_scanner = GateKeeper()
             
-            # Patch the log file path
-            with patch('gatekeeper.Path') as mock_path:
-                # Configure the mock
-                mock_instance = MagicMock()
-                mock_instance.parent = log_dir
-                mock_instance.__str__ = MagicMock(return_value=str(log_file))
-                mock_path.return_value = mock_instance
+            # Patch the entire logging setup instead of just the path
+            with patch('logging.FileHandler') as mock_handler:
+                # Configure the mock handler
+                mock_handler.return_value = MagicMock()
                 
                 logger = test_scanner._setup_logging()
                 
@@ -213,6 +210,9 @@ class TestGateKeeper(unittest.TestCase):
                 # Test logging functionality
                 test_message = "Test log message"
                 logger.info(test_message)
+                
+                # Verify handler was called
+                mock_handler.assert_called_once()
 
     @async_test
     async def test_rate_limiting(self):
