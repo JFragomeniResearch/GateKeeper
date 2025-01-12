@@ -319,5 +319,51 @@ class TestGateKeeper(unittest.TestCase):
         with self.assertRaises(Exception):
             self.scanner.decrypt_results(b'invalid_encrypted_data')
 
+    def test_main_execution_flow(self):
+        """Test the main execution flow."""
+        test_args = ['gatekeeper.py', '-t', 'example.com', '-p', '80,443']
+        
+        with patch('sys.argv', test_args), \
+             patch('builtins.input', return_value='yes'), \
+             patch.object(self.scanner, 'scan_ports') as mock_scan:
+            
+            # Mock scan_ports to return some results
+            mock_scan.return_value = [
+                {'port': 80, 'status': 'open', 'service': 'HTTP'},
+                {'port': 443, 'status': 'closed', 'service': 'HTTPS'}
+            ]
+            
+            # Run main function
+            self.scanner.main()
+            
+            # Verify scan was called
+            mock_scan.assert_called_once()
+
+    def test_scan_error_recovery(self):
+        """Test error recovery during scanning."""
+        async def mock_scan():
+            # Simulate a mix of successful and failed scans
+            results = []
+            for port in [80, 443, 8080]:
+                try:
+                    if port == 8080:
+                        raise ConnectionError("Simulated connection error")
+                    results.append({
+                        'port': port,
+                        'status': 'open' if port == 80 else 'closed',
+                        'service': 'HTTP' if port == 80 else 'HTTPS'
+                    })
+                except Exception as e:
+                    self.scanner.logger.error(f"Error scanning port {port}: {e}")
+            return results
+
+        with patch.object(self.scanner, 'scan_port', side_effect=mock_scan):
+            self.scanner.ports = [80, 443, 8080]
+            results = self.loop.run_until_complete(self.scanner.scan_ports())
+            
+            # Verify we got results despite the error
+            self.assertEqual(len(results), 2)
+            self.assertEqual(results[0]['port'], 80)
+
 if __name__ == '__main__':
     unittest.main() 
