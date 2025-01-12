@@ -25,6 +25,7 @@ class GateKeeper:
         self.rate_limit = 0.1
         self.max_scan_rate = 1000  # maximum ports per second
         self.encryption_key = self._generate_encryption_key()
+        self.reports_dir = Path('reports')
         
     def _generate_encryption_key(self) -> bytes:
         """Generate encryption key for securing scan results"""
