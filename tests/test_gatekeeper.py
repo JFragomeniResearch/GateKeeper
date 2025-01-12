@@ -269,5 +269,55 @@ class TestGateKeeper(unittest.TestCase):
             
             self.loop.run_until_complete(test_timeout())
 
+    def test_command_line_arguments(self):
+        """Test command line argument parsing."""
+        # Test valid arguments
+        with patch('sys.argv', ['gatekeeper.py', '-t', 'example.com', '-p', '80,443']):
+            args = self.scanner.parse_arguments()
+            self.assertEqual(args.target, 'example.com')
+            self.assertEqual(args.ports, '80,443')
+
+        # Test missing required arguments
+        with patch('sys.argv', ['gatekeeper.py']):
+            with self.assertRaises(SystemExit):
+                self.scanner.parse_arguments()
+
+    def test_advanced_error_handling(self):
+        """Test various error conditions."""
+        # Test invalid port range
+        with self.assertRaises(ValueError):
+            self.scanner.validate_ports("70000")
+        
+        # Test malformed port list
+        with self.assertRaises(ValueError):
+            self.scanner.validate_ports("80,abc,443")
+        
+        # Test empty target
+        with self.assertRaises(ValueError):
+            self.scanner.validate_target("")
+
+    def test_scan_timeout_handling(self):
+        """Test handling of scan timeouts."""
+        # Mock socket to simulate timeout
+        with patch('socket.socket') as mock_socket:
+            mock_socket.return_value.connect_ex.side_effect = socket.timeout
+            
+            async def test_timeout():
+                result = await self.scanner.scan_port(80)
+                self.assertIsNone(result)
+            
+            self.loop.run_until_complete(test_timeout())
+
+    def test_encryption_error_handling(self):
+        """Test encryption error scenarios."""
+        # Test encryption with invalid key
+        self.scanner.encryption_key = b'invalid_key'
+        with self.assertRaises(Exception):
+            self.scanner.encrypt_results([{'port': 80, 'status': 'open'}])
+        
+        # Test decryption with invalid data
+        with self.assertRaises(Exception):
+            self.scanner.decrypt_results(b'invalid_encrypted_data')
+
 if __name__ == '__main__':
     unittest.main() 
