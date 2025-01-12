@@ -124,7 +124,6 @@ class GateKeeper:
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         
         # Ensure reports directory exists
-        self.reports_dir = Path('reports')
         self.reports_dir.mkdir(exist_ok=True)
         
         if encrypt:
