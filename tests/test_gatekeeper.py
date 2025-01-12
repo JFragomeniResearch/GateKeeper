@@ -205,7 +205,7 @@ class TestGateKeeper(unittest.TestCase):
                 
                 # Verify logger configuration
                 self.assertEqual(logger.name, 'GateKeeper')
-                self.assertEqual(logger.level, logging.INFO)
+                self.assertEqual(logger.level, 20)  # This is the numeric value of logging.INFO
                 
                 # Test logging functionality
                 test_message = "Test log message"
