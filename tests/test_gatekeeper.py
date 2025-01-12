@@ -198,21 +198,29 @@ class TestGateKeeper(unittest.TestCase):
             
             # Patch the entire logging setup instead of just the path
             with patch('logging.FileHandler') as mock_handler:
-                # Configure the mock handler
-                mock_handler.return_value = MagicMock()
+                # Configure the mock handler with required attributes
+                handler_instance = MagicMock()
+                handler_instance.level = logging.INFO
+                mock_handler.return_value = handler_instance
                 
                 logger = test_scanner._setup_logging()
                 
-                # Verify logger configuration
-                self.assertEqual(logger.name, 'GateKeeper')
-                self.assertEqual(logger.level, 20)  # This is the numeric value of logging.INFO
-                
-                # Test logging functionality
-                test_message = "Test log message"
-                logger.info(test_message)
-                
-                # Verify handler was called
-                mock_handler.assert_called_once()
+                try:
+                    # Verify logger configuration
+                    self.assertEqual(logger.name, 'GateKeeper')
+                    self.assertEqual(logger.level, logging.INFO)
+                    
+                    # Test logging functionality
+                    test_message = "Test log message"
+                    logger.info(test_message)
+                    
+                    # Verify handler was called
+                    mock_handler.assert_called_once()
+                finally:
+                    # Clean up handlers to prevent file lock issues
+                    for handler in logger.handlers[:]:
+                        handler.close()
+                        logger.removeHandler(handler)
 
     @async_test
     async def test_rate_limiting(self):
