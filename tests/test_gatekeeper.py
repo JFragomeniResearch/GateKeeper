@@ -191,17 +191,19 @@ class TestGateKeeper(unittest.TestCase):
             # Create log directory structure
             log_dir = Path(tmpdir) / 'logs'
             log_dir.mkdir(exist_ok=True)
+            log_file = log_dir / 'gatekeeper.log'
+            
+            # Create a test-specific GateKeeper instance
+            test_scanner = GateKeeper()
             
             # Patch the log file path
             with patch('gatekeeper.Path') as mock_path:
-                # Configure the mock to return our temporary path
-                mock_instance = Mock()
+                # Configure the mock
+                mock_instance = MagicMock()
                 mock_instance.parent = log_dir
-                mock_instance.__str__.return_value = str(log_dir / 'gatekeeper.log')
+                mock_instance.__str__ = MagicMock(return_value=str(log_file))
                 mock_path.return_value = mock_instance
                 
-                # Create a test-specific GateKeeper instance
-                test_scanner = GateKeeper()
                 logger = test_scanner._setup_logging()
                 
                 # Verify logger configuration
