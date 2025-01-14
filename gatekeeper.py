@@ -237,6 +237,21 @@ class GateKeeper:
         
         return results
 
+    def validate_target(self, target: str) -> str:
+        """Validate target hostname or IP address."""
+        if not target:
+            raise ValueError("Target cannot be empty")
+        
+        # Remove any whitespace and protocol prefixes
+        target = target.strip().lower()
+        target = target.replace('http://', '').replace('https://', '')
+        
+        # Basic validation of hostname format
+        if not all(c.isalnum() or c in '-._' for c in target.split('.')[0]):
+            raise ValueError("Invalid target format")
+            
+        return target
+
     def main(self):
         """Main execution flow."""
         try:

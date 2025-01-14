@@ -341,21 +341,15 @@ class TestGateKeeper(unittest.TestCase):
 
     def test_scan_error_recovery(self):
         """Test error recovery during scanning."""
-        async def mock_scan():
+        async def mock_scan(port):
             # Simulate a mix of successful and failed scans
-            results = []
-            for port in [80, 443, 8080]:
-                try:
-                    if port == 8080:
-                        raise ConnectionError("Simulated connection error")
-                    results.append({
-                        'port': port,
-                        'status': 'open' if port == 80 else 'closed',
-                        'service': 'HTTP' if port == 80 else 'HTTPS'
-                    })
-                except Exception as e:
-                    self.scanner.logger.error(f"Error scanning port {port}: {e}")
-            return results
+            if port == 8080:
+                raise ConnectionError("Simulated connection error")
+            return {
+                'port': port,
+                'status': 'open' if port == 80 else 'closed',
+                'service': 'HTTP' if port == 80 else 'HTTPS'
+            }
 
         with patch.object(self.scanner, 'scan_port', side_effect=mock_scan):
             self.scanner.ports = [80, 443, 8080]
@@ -364,6 +358,7 @@ class TestGateKeeper(unittest.TestCase):
             # Verify we got results despite the error
             self.assertEqual(len(results), 2)
             self.assertEqual(results[0]['port'], 80)
+            self.assertEqual(results[1]['port'], 443)
 
 if __name__ == '__main__':
     unittest.main() 
