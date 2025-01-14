@@ -13,6 +13,7 @@ from cryptography.fernet import Fernet  # for encryption
 import json
 from typing import List, Tuple, Dict, Optional
 from utils.banner import display_banner, display_scan_start, display_scan_complete
+import asyncio
 
 class GateKeeper:
     def __init__(self):
@@ -32,19 +33,23 @@ class GateKeeper:
         return Fernet.generate_key()
 
     def _setup_logging(self) -> logging.Logger:
-        """Configure logging with audit trail"""
+        """Set up logging configuration."""
+        logger = logging.getLogger('GateKeeper')
+        logger.setLevel(logging.INFO)
+        
+        # Create logs directory if it doesn't exist
         log_file = Path('logs/gatekeeper.log')
         log_file.parent.mkdir(exist_ok=True)
         
-        logging.basicConfig(
-            level=logging.INFO,
-            format='%(asctime)s - %(levelname)s - [%(name)s] - %(message)s',
-            handlers=[
-                logging.FileHandler(log_file),
-                logging.StreamHandler()
-            ]
+        # Add handlers
+        logger.addHandler(
+            logging.FileHandler(log_file),
         )
-        return logging.getLogger('GateKeeper')
+        logger.addHandler(
+            logging.StreamHandler()
+        )
+        
+        return logger
 
     def verify_dns(self, target: str) -> bool:
         """Verify DNS resolution and check for common DNS-related attacks"""
@@ -193,61 +198,77 @@ class GateKeeper:
             print("\nOperation cancelled by user.")
             return False
 
+    def validate_ports(self, ports_str: str) -> List[int]:
+        """Validate port numbers from string input."""
+        try:
+            ports = []
+            for port in ports_str.split(','):
+                port = int(port.strip())
+                if not 1 <= port <= 65535:
+                    raise ValueError(f"Port {port} is out of valid range (1-65535)")
+                ports.append(port)
+            return ports
+        except ValueError as e:
+            raise ValueError(f"Invalid port specification: {e}")
+
+    def parse_arguments(self) -> argparse.Namespace:
+        """Parse command line arguments."""
+        parser = argparse.ArgumentParser(description='GateKeeper Port Scanner')
+        parser.add_argument('-t', '--target', required=True, help='Target host to scan')
+        parser.add_argument('-p', '--ports', required=True, help='Ports to scan (comma-separated)')
+        parser.add_argument('--timeout', type=float, default=1.0, help='Timeout for each port scan')
+        parser.add_argument('--threads', type=int, default=100, help='Number of concurrent scans')
+        return parser.parse_args()
+
+    async def scan_ports(self) -> List[Dict]:
+        """Scan multiple ports concurrently."""
+        tasks = []
+        for port in self.ports:
+            tasks.append(self.scan_port(port))
+        
+        results = []
+        for task in asyncio.as_completed(tasks):
+            try:
+                result = await task
+                if result:
+                    results.append(result)
+            except Exception as e:
+                self.logger.error(f"Error during port scan: {e}")
+        
+        return results
+
+    def main(self):
+        """Main execution flow."""
+        try:
+            args = self.parse_arguments()
+            self.target = args.target
+            self.ports = self.validate_ports(args.ports)
+            self.timeout = args.timeout
+            self.threads = args.threads
+
+            self.display_disclaimer()
+            if input("Do you want to continue? (yes/no): ").lower() != 'yes':
+                self.logger.info("Scan cancelled by user")
+                return
+
+            self.logger.info(f"Starting scan of {self.target}")
+            results = asyncio.run(self.scan_ports())
+            
+            # Save results
+            self.save_results(results, encrypt=True)
+            self.logger.info("Scan complete")
+            
+        except Exception as e:
+            self.logger.error(f"Error during execution: {e}")
+            sys.exit(1)
+
 def main():
     # Display the banner first
     display_banner()
     
-    parser = argparse.ArgumentParser(description='GateKeeper Network Scanner')
-    parser.add_argument('-t', '--target', required=True, help='Target hostname or IP')
-    parser.add_argument('-p', '--ports', required=True, help='Port range (e.g., 1-1024)')
-    parser.add_argument('-th', '--threads', type=int, default=100, help='Number of threads')
-    parser.add_argument('--timeout', type=float, default=1.0, help='Timeout in seconds')
-    parser.add_argument('--rate-limit', type=float, default=0.1, help='Time between scans')
-    parser.add_argument('--encrypt', action='store_true', help='Encrypt scan results')
-    
-    args = parser.parse_args()
-    
     scanner = GateKeeper()
     
-    if not scanner.display_disclaimer():
-        sys.exit(1)
-    
-    # Display scan start information
-    display_scan_start(args.target, args.ports)
-    
-    start_time = time.time()
-    
-    # Parse port range
-    try:
-        if '-' in args.ports:
-            start, end = map(int, args.ports.split('-'))
-            ports = range(start, end + 1)
-        else:
-            ports = [int(args.ports)]
-    except ValueError:
-        scanner.logger.error("Invalid port range specified")
-        sys.exit(1)
-
-    scanner.target = args.target
-    scanner.threads = args.threads
-    scanner.timeout = args.timeout
-    scanner.rate_limit = args.rate_limit
-
-    # Start scanning
-    results = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=args.threads) as executor:
-        future_to_port = {executor.submit(scanner.scan_port, port): port for port in ports}
-        for future in concurrent.futures.as_completed(future_to_port):
-            result = future.result()
-            if result:
-                results.append(result)
-
-    # After scanning is complete
-    scan_duration = time.time() - start_time
-    display_scan_complete(scan_duration)
-    
-    # Save results
-    scanner.save_results(results, encrypt=args.encrypt)
+    scanner.main()
 
 if __name__ == "__main__":
     main() 
