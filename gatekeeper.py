@@ -224,7 +224,7 @@ class GateKeeper:
         """Scan multiple ports concurrently."""
         tasks = []
         for port in self.ports:
-            tasks.append(self.scan_port(port))
+            tasks.append(asyncio.create_task(self.scan_port(port)))
         
         results = []
         for task in asyncio.as_completed(tasks):
@@ -235,6 +235,8 @@ class GateKeeper:
             except Exception as e:
                 self.logger.error(f"Error during port scan: {e}")
         
+        # Sort results by port number for consistency
+        results.sort(key=lambda x: x['port'])
         return results
 
     def validate_target(self, target: str) -> str:

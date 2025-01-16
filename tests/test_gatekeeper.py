@@ -355,10 +355,17 @@ class TestGateKeeper(unittest.TestCase):
             self.scanner.ports = [80, 443, 8080]
             results = self.loop.run_until_complete(self.scanner.scan_ports())
             
+            # Sort results by port for consistent testing
+            results.sort(key=lambda x: x['port'])
+            
             # Verify we got results despite the error
-            self.assertEqual(len(results), 2)
+            self.assertEqual(len(results), 2)  # Should get results for 80 and 443
             self.assertEqual(results[0]['port'], 80)
             self.assertEqual(results[1]['port'], 443)
+            
+            # Verify the status of each port
+            self.assertEqual(results[0]['status'], 'open')
+            self.assertEqual(results[1]['status'], 'closed')
 
 if __name__ == '__main__':
     unittest.main() 
