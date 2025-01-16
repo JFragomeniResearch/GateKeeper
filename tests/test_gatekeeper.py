@@ -369,12 +369,12 @@ class TestGateKeeper(unittest.TestCase):
 
     def test_dns_resolution_failure(self):
         """Test handling of DNS resolution failures."""
-        self.scanner.target = "nonexistent.domain.local"
+        test_target = "nonexistent.domain.local"
         
         # Mock socket to raise gaierror (DNS failure)
         with patch('socket.gethostbyname', side_effect=socket.gaierror):
             with self.assertRaises(ValueError):
-                self.scanner.verify_dns()
+                self.scanner.verify_dns(test_target)
 
     def test_main_execution_errors(self):
         """Test main execution error handling."""
@@ -391,13 +391,15 @@ class TestGateKeeper(unittest.TestCase):
 
     def test_encryption_key_errors(self):
         """Test encryption key generation and handling errors."""
-        # Test with mock that simulates OS error
-        with patch('os.urandom', side_effect=OSError("Simulated OS error")):
+        # Test with mock that simulates cryptography error
+        with patch('cryptography.fernet.Fernet.generate_key', 
+                  side_effect=RuntimeError("Simulated crypto error")):
             with self.assertRaises(RuntimeError):
                 self.scanner._generate_encryption_key()
         
-        # Test with invalid key size
-        with patch('os.urandom', return_value=b'too_short'):
+        # Test with invalid key format
+        with patch('cryptography.fernet.Fernet.generate_key', 
+                  return_value=b'invalid_key_format'):
             with self.assertRaises(ValueError):
                 self.scanner._generate_encryption_key()
 
