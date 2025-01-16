@@ -367,5 +367,39 @@ class TestGateKeeper(unittest.TestCase):
             self.assertEqual(results[0]['status'], 'open')
             self.assertEqual(results[1]['status'], 'closed')
 
+    def test_dns_resolution_failure(self):
+        """Test handling of DNS resolution failures."""
+        self.scanner.target = "nonexistent.domain.local"
+        
+        # Mock socket to raise gaierror (DNS failure)
+        with patch('socket.gethostbyname', side_effect=socket.gaierror):
+            with self.assertRaises(ValueError):
+                self.scanner.verify_dns()
+
+    def test_main_execution_errors(self):
+        """Test main execution error handling."""
+        test_args = ['gatekeeper.py', '-t', 'example.com', '-p', '80,443']
+        
+        with patch('sys.argv', test_args), \
+             patch('builtins.input', return_value='yes'), \
+             patch.object(self.scanner, 'scan_ports', side_effect=Exception("Test error")):
+            
+            # Should exit with status code 1 on error
+            with self.assertRaises(SystemExit) as cm:
+                self.scanner.main()
+            self.assertEqual(cm.exception.code, 1)
+
+    def test_encryption_key_errors(self):
+        """Test encryption key generation and handling errors."""
+        # Test with mock that simulates OS error
+        with patch('os.urandom', side_effect=OSError("Simulated OS error")):
+            with self.assertRaises(RuntimeError):
+                self.scanner._generate_encryption_key()
+        
+        # Test with invalid key size
+        with patch('os.urandom', return_value=b'too_short'):
+            with self.assertRaises(ValueError):
+                self.scanner._generate_encryption_key()
+
 if __name__ == '__main__':
     unittest.main() 
