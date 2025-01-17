@@ -372,9 +372,10 @@ class TestGateKeeper(unittest.TestCase):
         test_target = "nonexistent.domain.local"
         
         # Mock socket to raise gaierror (DNS failure)
-        with patch('socket.gethostbyname', side_effect=socket.gaierror):
-            with self.assertRaises(ValueError):
+        with patch('socket.gethostbyname', side_effect=socket.gaierror("DNS lookup failed")):
+            with self.assertRaises(ValueError) as cm:
                 self.scanner.verify_dns(test_target)
+            self.assertIn("DNS resolution failed", str(cm.exception))
 
     def test_main_execution_errors(self):
         """Test main execution error handling."""
@@ -394,14 +395,16 @@ class TestGateKeeper(unittest.TestCase):
         # Test with mock that simulates cryptography error
         with patch('cryptography.fernet.Fernet.generate_key', 
                   side_effect=RuntimeError("Simulated crypto error")):
-            with self.assertRaises(RuntimeError):
+            with self.assertRaises(RuntimeError) as cm:
                 self.scanner._generate_encryption_key()
+            self.assertIn("Failed to generate encryption key", str(cm.exception))
         
         # Test with invalid key format
         with patch('cryptography.fernet.Fernet.generate_key', 
-                  return_value=b'invalid_key_format'):
-            with self.assertRaises(ValueError):
+                  return_value=b'invalid'):  # Too short to be valid
+            with self.assertRaises(ValueError) as cm:
                 self.scanner._generate_encryption_key()
+            self.assertIn("Invalid key format", str(cm.exception))
 
 if __name__ == '__main__':
     unittest.main() 

@@ -29,8 +29,14 @@ class GateKeeper:
         self.reports_dir = Path('reports')
         
     def _generate_encryption_key(self) -> bytes:
-        """Generate encryption key for securing scan results"""
-        return Fernet.generate_key()
+        """Generate encryption key for results."""
+        try:
+            key = Fernet.generate_key()
+            if not isinstance(key, bytes) or len(key) != 44:  # Fernet keys are 44 bytes when base64 encoded
+                raise ValueError("Invalid key format generated")
+            return key
+        except Exception as e:
+            raise RuntimeError(f"Failed to generate encryption key: {e}")
 
     def _setup_logging(self) -> logging.Logger:
         """Set up logging configuration."""
@@ -52,25 +58,13 @@ class GateKeeper:
         return logger
 
     def verify_dns(self, target: str) -> bool:
-        """Verify DNS resolution and check for common DNS-related attacks"""
+        """Verify DNS resolution for target."""
         try:
-            # Perform forward DNS lookup
-            ip_addr = socket.gethostbyname(target)
-            
-            # Perform reverse DNS lookup
-            host_name = socket.gethostbyaddr(ip_addr)[0]
-            
-            # Verify with multiple DNS servers
-            resolver = dns.resolver.Resolver()
-            resolver.nameservers = ['8.8.8.8', '1.1.1.1']  # Google DNS and Cloudflare
-            answers = resolver.resolve(target, 'A')
-            
-            self.logger.info(f"DNS verification successful for {target} ({ip_addr})")
+            socket.gethostbyname(target)
             return True
-            
-        except (socket.gaierror, dns.resolver.NXDOMAIN) as e:
-            self.logger.error(f"DNS verification failed for {target}: {str(e)}")
-            return False
+        except socket.gaierror as e:
+            self.logger.error(f"DNS verification failed for {target}: {e}")
+            raise ValueError(f"DNS resolution failed for {target}") from e
 
     async def scan_port(self, port: int) -> Optional[Dict]:
         """Scan a single port with rate limiting and timeout"""
