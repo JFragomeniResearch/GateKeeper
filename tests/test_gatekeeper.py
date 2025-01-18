@@ -373,9 +373,15 @@ class TestGateKeeper(unittest.TestCase):
         
         # Mock socket to raise gaierror (DNS failure)
         with patch('socket.gethostbyname', side_effect=socket.gaierror("DNS lookup failed")):
-            with self.assertRaises(ValueError) as cm:
-                self.scanner.verify_dns(test_target)
-            self.assertIn("DNS resolution failed", str(cm.exception))
+            with self.assertLogs(level='ERROR') as logs:
+                result = self.scanner.verify_dns(test_target)
+                
+                # Verify the function returns False
+                self.assertFalse(result)
+                
+                # Verify error was logged
+                self.assertIn("DNS verification failed", logs.output[0])
+                self.assertIn("DNS lookup failed", logs.output[0])
 
     def test_main_execution_errors(self):
         """Test main execution error handling."""
