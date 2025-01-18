@@ -35,6 +35,9 @@ class GateKeeper:
             if not isinstance(key, bytes) or len(key) != 44:  # Fernet keys are 44 bytes when base64 encoded
                 raise ValueError("Invalid key format generated")
             return key
+        except ValueError as e:
+            # Re-raise ValueError directly
+            raise e
         except Exception as e:
             raise RuntimeError(f"Failed to generate encryption key: {e}")
 
@@ -64,7 +67,7 @@ class GateKeeper:
             return True
         except socket.gaierror as e:
             self.logger.error(f"DNS verification failed for {target}: {e}")
-            raise ValueError(f"DNS resolution failed for {target}") from e
+            return False  # Return False instead of raising exception
 
     async def scan_port(self, port: int) -> Optional[Dict]:
         """Scan a single port with rate limiting and timeout"""
