@@ -412,5 +412,24 @@ class TestGateKeeper(unittest.TestCase):
                 self.scanner._generate_encryption_key()
             self.assertIn("Invalid key format", str(cm.exception))
 
+    def test_main_execution_cancellation(self):
+        """Test cancellation of main execution."""
+        test_args = ['gatekeeper.py', '-t', 'example.com', '-p', '80,443']
+        
+        with patch('sys.argv', test_args), \
+             patch('builtins.input', return_value='no'):  # User cancels
+            self.scanner.main()
+            # Verify early exit without scanning
+
+    def test_advanced_encryption_scenarios(self):
+        """Test additional encryption scenarios."""
+        # Test encryption with empty results
+        encrypted = self.scanner.encrypt_results([])
+        self.assertIsNotNone(encrypted)
+        
+        # Test decryption with empty data
+        with self.assertRaises(ValueError):
+            self.scanner.decrypt_results(b'')
+
 if __name__ == '__main__':
     unittest.main() 
