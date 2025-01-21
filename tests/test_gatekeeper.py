@@ -431,5 +431,37 @@ class TestGateKeeper(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.scanner.decrypt_results(b'')
 
+    def test_main_execution_edge_cases(self):
+        """Test edge cases in main execution flow."""
+        # Test with invalid port specification
+        test_args = ['gatekeeper.py', '-t', 'example.com', '-p', 'invalid']
+        with patch('sys.argv', test_args), \
+             patch('builtins.input', return_value='yes'):
+            with self.assertRaises(SystemExit):
+                self.scanner.main()
+
+    def test_service_identification_failure(self):
+        """Test service identification when connection fails."""
+        async def mock_connect():
+            raise ConnectionError("Connection timeout")
+
+        with patch('socket.socket.connect_ex', side_effect=mock_connect):
+            result = self.loop.run_until_complete(
+                self.scanner.identify_service(80)
+            )
+            self.assertIsNone(result)
+
+    def test_advanced_decryption_failures(self):
+        """Test advanced decryption failure scenarios."""
+        # Test with corrupted encrypted data
+        with self.assertRaises(ValueError):
+            self.scanner.decrypt_results(b'corrupted_data')
+        
+        # Test with invalid JSON after decryption
+        with patch('cryptography.fernet.Fernet.decrypt', 
+                  return_value=b'invalid json'):
+            with self.assertRaises(ValueError):
+                self.scanner.decrypt_results(b'any')
+
 if __name__ == '__main__':
     unittest.main() 
