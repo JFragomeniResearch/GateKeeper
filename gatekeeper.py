@@ -121,6 +121,18 @@ class GateKeeper:
         data = json.dumps(results).encode()
         return f.encrypt(data)
 
+    def decrypt_results(self, encrypted_data: bytes) -> List[Dict]:
+        """Decrypt scan results."""
+        if not encrypted_data:
+            raise ValueError("Cannot decrypt empty data")
+            
+        try:
+            f = Fernet(self.encryption_key)
+            decrypted_data = f.decrypt(encrypted_data)
+            return json.loads(decrypted_data.decode())
+        except Exception as e:
+            raise ValueError(f"Failed to decrypt results: {e}")
+
     def save_results(self, results: List[Dict], encrypt: bool = False) -> None:
         """Save scan results to file"""
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
