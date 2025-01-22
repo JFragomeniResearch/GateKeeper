@@ -447,7 +447,7 @@ class TestGateKeeper(unittest.TestCase):
 
         with patch('socket.socket.connect_ex', side_effect=mock_connect):
             result = self.loop.run_until_complete(
-                self.scanner.identify_service(80)
+                self.scanner._identify_service(80)
             )
             self.assertIsNone(result)
 
