@@ -442,15 +442,13 @@ class TestGateKeeper(unittest.TestCase):
 
     def test_service_identification_failure(self):
         """Test service identification when connection fails."""
-        async def mock_connect():
+        def mock_connect_ex(addr):
             raise ConnectionError("Connection timeout")
 
-        async def test_identify():
-            with patch('socket.socket.connect_ex', side_effect=mock_connect):
-                result = await self.scanner._identify_service(80)
+        with patch('socket.socket.connect_ex', side_effect=mock_connect_ex):
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                result = self.scanner._identify_service(80)
                 self.assertIsNone(result)
-
-        self.loop.run_until_complete(test_identify())
 
     def test_advanced_decryption_failures(self):
         """Test advanced decryption failure scenarios."""
