@@ -34,6 +34,10 @@ class TestGateKeeper(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         """Set up test environment before any tests run."""
+        if sys.platform.startswith('win'):
+            asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+        cls.loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(cls.loop)
         # Create necessary directories
         Path('logs').mkdir(exist_ok=True)
         Path('reports').mkdir(exist_ok=True)
@@ -46,15 +50,16 @@ class TestGateKeeper(unittest.TestCase):
             file.unlink()
         for file in Path('reports').glob('scan_results_*'):
             file.unlink()
+        cls.loop.close()
+        asyncio.set_event_loop(None)
 
     def setUp(self):
         """Set up test fixtures before each test method."""
         self.scanner = GateKeeper()
+        self.scanner.target = "example.com"
+        self.scanner.ports = [80, 443]
         self.test_target = "localhost"
         self.test_port = 80
-        # Set up event loop for async tests
-        self.loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(self.loop)
 
     def tearDown(self):
         """Clean up after each test method."""
@@ -63,8 +68,6 @@ class TestGateKeeper(unittest.TestCase):
             file.unlink()
         for file in Path("logs").glob("test_*.log"):
             file.unlink()
-        # Clean up event loop
-        self.loop.close()
 
     def test_initialization(self):
         """Test if GateKeeper initializes with correct default values."""
@@ -442,25 +445,23 @@ class TestGateKeeper(unittest.TestCase):
 
     def test_service_identification_failure(self):
         """Test service identification when connection fails."""
-        # Store the original method
-        original_identify = self.scanner._identify_service
+        # Create a new event loop for this test
+        test_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(test_loop)
         
-        # Replace with a simple method that always returns None
-        async def mock_identify(port):
-            self.scanner.logger.error(f"Service identification failed for port {port}: Test error")
-            return None
-            
         try:
-            # Replace the method
-            self.scanner._identify_service = mock_identify
+            async def mock_service(port):
+                return None
+                
+            self.scanner._identify_service = mock_service
             
-            # Run the test
-            result = self.loop.run_until_complete(self.scanner._identify_service(80))
+            # Run with the new loop
+            result = test_loop.run_until_complete(self.scanner._identify_service(80))
             self.assertIsNone(result)
             
         finally:
-            # Restore the original method
-            self.scanner._identify_service = original_identify
+            test_loop.close()
+            asyncio.set_event_loop(self.loop)  # Restore original loop
 
     def test_advanced_decryption_failures(self):
         """Test advanced decryption failure scenarios."""
