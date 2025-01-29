@@ -96,10 +96,20 @@ class TestGateKeeper(unittest.TestCase):
             80: 'HTTP',
             443: 'HTTPS'
         }
-        
+
         for port, service in common_ports.items():
-            identified_service = self.scanner._identify_service(port)
-            self.assertEqual(identified_service, service)
+            # Create a new event loop for each test
+            test_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(test_loop)
+            
+            try:
+                identified_service = test_loop.run_until_complete(
+                    self.scanner._identify_service(port)
+                )
+                self.assertEqual(identified_service, service)
+            finally:
+                test_loop.close()
+                asyncio.set_event_loop(self.loop)  # Restore original loop
 
     @patch('dns.resolver.Resolver')
     @patch('socket.gethostbyname')
