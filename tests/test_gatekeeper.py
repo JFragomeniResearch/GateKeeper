@@ -2,7 +2,7 @@ import unittest
 import socket
 import logging
 import time
-from unittest.mock import Mock, patch, MagicMock, call
+from unittest.mock import Mock, patch, MagicMock, call, AsyncMock
 from pathlib import Path
 import sys
 import os
@@ -97,19 +97,27 @@ class TestGateKeeper(unittest.TestCase):
             443: 'HTTPS'
         }
 
+        async def mock_open_connection(*args, **kwargs):
+            # Return mock reader and writer
+            mock_reader = MagicMock()
+            mock_writer = MagicMock()
+            mock_writer.close = MagicMock()
+            mock_writer.wait_closed = AsyncMock()
+            return mock_reader, mock_writer
+
         for port, service in common_ports.items():
-            # Create a new event loop for each test
             test_loop = asyncio.new_event_loop()
             asyncio.set_event_loop(test_loop)
             
             try:
-                identified_service = test_loop.run_until_complete(
-                    self.scanner._identify_service(port)
-                )
-                self.assertEqual(identified_service, service)
+                with patch('asyncio.open_connection', mock_open_connection):
+                    identified_service = test_loop.run_until_complete(
+                        self.scanner._identify_service(port)
+                    )
+                    self.assertEqual(identified_service, service)
             finally:
                 test_loop.close()
-                asyncio.set_event_loop(self.loop)  # Restore original loop
+                asyncio.set_event_loop(self.loop)
 
     @patch('dns.resolver.Resolver')
     @patch('socket.gethostbyname')
