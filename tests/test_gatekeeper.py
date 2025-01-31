@@ -92,20 +92,24 @@ class TestGateKeeper(unittest.TestCase):
     def test_service_identification(self):
         """Test service identification functionality."""
         common_ports = {
-            22: 'SSH',
-            80: 'HTTP',
-            443: 'HTTPS'
+            22: ('SSH-2.0-OpenSSH_8.9\r\n', 'SSH'),
+            80: ('HTTP/1.1 200 OK\r\n', 'HTTP'),
+            443: (None, 'HTTPS')  # HTTPS is passive check
         }
 
         async def mock_open_connection(*args, **kwargs):
-            # Return mock reader and writer
-            mock_reader = MagicMock()
-            mock_writer = MagicMock()
-            mock_writer.close = MagicMock()
-            mock_writer.wait_closed = AsyncMock()
+            mock_reader = AsyncMock()
+            mock_writer = AsyncMock()
+            
+            port = args[1]  # Port is second argument
+            response, _ = common_ports[port]
+            
+            if response:
+                mock_reader.readline.return_value = response.encode()
+            
             return mock_reader, mock_writer
 
-        for port, service in common_ports.items():
+        for port, (_, expected_service) in common_ports.items():
             test_loop = asyncio.new_event_loop()
             asyncio.set_event_loop(test_loop)
             
@@ -114,7 +118,7 @@ class TestGateKeeper(unittest.TestCase):
                     identified_service = test_loop.run_until_complete(
                         self.scanner._identify_service(port)
                     )
-                    self.assertEqual(identified_service, service)
+                    self.assertEqual(identified_service, expected_service)
             finally:
                 test_loop.close()
                 asyncio.set_event_loop(self.loop)

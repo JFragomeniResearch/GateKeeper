@@ -84,7 +84,7 @@ class GateKeeper:
             result = sock.connect_ex((self.target, port))
             
             if result == 0:
-                service = self._identify_service(port)
+                service = await self._identify_service(port)
                 self.logger.info(f"Port {port} is open ({service})")
                 return {
                     'port': port,
@@ -100,20 +100,34 @@ class GateKeeper:
             self.logger.error(f"Error scanning port {port}: {str(e)}")
             return None
 
-    def _identify_service(self, port: int) -> str:
-        """Identify common services based on port number"""
-        common_ports = {
-            21: 'FTP',
-            22: 'SSH',
-            23: 'Telnet',
-            25: 'SMTP',
-            53: 'DNS',
-            80: 'HTTP',
-            443: 'HTTPS',
-            3306: 'MySQL',
-            3389: 'RDP'
-        }
-        return common_ports.get(port, 'Unknown')
+    async def _identify_service(self, port: int) -> Optional[str]:
+        """Identify service running on a port."""
+        try:
+            reader, writer = await asyncio.open_connection(self.target, port)
+            try:
+                # Send appropriate probe for each service
+                if port == 22:
+                    writer.write(b'SSH-2.0-GateKeeper\r\n')
+                    await writer.drain()
+                    response = await reader.readline()
+                    if b'SSH' in response:
+                        return 'SSH'
+                elif port == 80:
+                    writer.write(b'GET / HTTP/1.0\r\n\r\n')
+                    await writer.drain()
+                    response = await reader.readline()
+                    if b'HTTP' in response:
+                        return 'HTTP'
+                elif port == 443:
+                    return 'HTTPS'  # HTTPS detection is passive
+                
+                return f'Unknown-{port}'
+            finally:
+                writer.close()
+                await writer.wait_closed()
+        except Exception as e:
+            self.logger.error(f"Service identification failed for port {port}: {e}")
+            return None
 
     def encrypt_results(self, results: List[Dict]) -> bytes:
         """Encrypt scan results"""
