@@ -101,9 +101,11 @@ class TestGateKeeper(unittest.TestCase):
             mock_reader = AsyncMock()
             mock_writer = AsyncMock()
             
-            # Make write() synchronous to avoid warning
+            # Make write() and close() synchronous to avoid warnings
             mock_writer.write = MagicMock()
             mock_writer.drain = AsyncMock()
+            mock_writer.close = MagicMock()
+            mock_writer.wait_closed = AsyncMock()
             
             port = args[1]  # Port is second argument
             response, _ = common_ports[port]
