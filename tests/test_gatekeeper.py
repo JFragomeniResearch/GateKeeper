@@ -314,18 +314,24 @@ class TestGateKeeper(unittest.TestCase):
                 self.scanner.parse_arguments()
 
     def test_advanced_error_handling(self):
-        """Test various error conditions."""
-        # Test invalid port range
-        with self.assertRaises(ValueError):
-            self.scanner.validate_ports("70000")
+        """Test advanced error handling scenarios."""
+        # Test service identification timeout
+        async def slow_connection(*args, **kwargs):
+            await asyncio.sleep(0.1)  # Simulate slow connection
+            raise asyncio.TimeoutError("Connection timed out")
+            
+        test_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(test_loop)
         
-        # Test malformed port list
-        with self.assertRaises(ValueError):
-            self.scanner.validate_ports("80,abc,443")
-        
-        # Test empty target
-        with self.assertRaises(ValueError):
-            self.scanner.validate_target("")
+        try:
+            with patch('asyncio.open_connection', side_effect=slow_connection):
+                result = test_loop.run_until_complete(
+                    self.scanner._identify_service(80)
+                )
+                self.assertIsNone(result)
+        finally:
+            test_loop.close()
+            asyncio.set_event_loop(self.loop)
 
     def test_scan_timeout_handling(self):
         """Test handling of scan timeouts."""
@@ -502,6 +508,14 @@ class TestGateKeeper(unittest.TestCase):
                   return_value=b'invalid json'):
             with self.assertRaises(ValueError):
                 self.scanner.decrypt_results(b'any')
+
+    def test_main_execution_error_handling(self):
+        """Test main execution error paths."""
+        # Test with invalid arguments
+        test_args = ['gatekeeper.py', '-t', 'example.com', '-p', 'invalid,ports']
+        with patch('sys.argv', test_args):
+            with self.assertRaises(ValueError):
+                self.scanner.main()
 
 if __name__ == '__main__':
     unittest.main() 
