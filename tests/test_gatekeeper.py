@@ -525,5 +525,22 @@ class TestGateKeeper(unittest.TestCase):
                 self.scanner.main()
             self.assertEqual(cm.exception.code, 1)
 
+    def test_main_execution_user_interaction(self):
+        """Test main execution with user interaction."""
+        test_args = ['gatekeeper.py', '-t', 'example.com', '-p', '80']
+        
+        # Test user cancellation
+        with patch('sys.argv', test_args), \
+             patch('builtins.input', return_value='no'):
+            with self.assertRaises(SystemExit) as cm:
+                self.scanner.main()
+            self.assertEqual(cm.exception.code, 0)  # Clean exit
+            
+        # Test user confirmation
+        with patch('sys.argv', test_args), \
+             patch('builtins.input', return_value='yes'), \
+             patch('asyncio.run', return_value=[{'port': 80, 'state': 'open'}]):
+            self.scanner.main()  # Should complete without raising
+
 if __name__ == '__main__':
     unittest.main() 
