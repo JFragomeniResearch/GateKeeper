@@ -514,8 +514,16 @@ class TestGateKeeper(unittest.TestCase):
         # Test with invalid arguments
         test_args = ['gatekeeper.py', '-t', 'example.com', '-p', 'invalid,ports']
         with patch('sys.argv', test_args):
-            with self.assertRaises(ValueError):
+            with self.assertRaises(SystemExit) as cm:
                 self.scanner.main()
+            self.assertEqual(cm.exception.code, 1)  # Verify exit code
+            
+        # Test with valid ports but invalid range
+        test_args = ['gatekeeper.py', '-t', 'example.com', '-p', '0,65536']
+        with patch('sys.argv', test_args):
+            with self.assertRaises(SystemExit) as cm:
+                self.scanner.main()
+            self.assertEqual(cm.exception.code, 1)
 
 if __name__ == '__main__':
     unittest.main() 
