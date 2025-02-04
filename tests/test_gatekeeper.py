@@ -534,13 +534,16 @@ class TestGateKeeper(unittest.TestCase):
              patch('builtins.input', return_value='no'):
             with self.assertRaises(SystemExit) as cm:
                 self.scanner.main()
-            self.assertEqual(cm.exception.code, 0)  # Clean exit
+            self.assertEqual(cm.exception.code, 0)  # Clean exit for user cancellation
             
         # Test user confirmation
         with patch('sys.argv', test_args), \
              patch('builtins.input', return_value='yes'), \
              patch('asyncio.run', return_value=[{'port': 80, 'state': 'open'}]):
-            self.scanner.main()  # Should complete without raising
+            try:
+                self.scanner.main()
+            except SystemExit:
+                self.fail("Should not exit when user confirms")
 
 if __name__ == '__main__':
     unittest.main() 

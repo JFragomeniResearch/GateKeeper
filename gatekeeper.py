@@ -289,7 +289,7 @@ class GateKeeper:
             self.display_disclaimer()
             if input("Do you want to continue? (yes/no): ").lower() != 'yes':
                 self.logger.info("Scan cancelled by user")
-                return
+                sys.exit(0)  # Add explicit exit for cancellation
 
             self.logger.info(f"Starting scan of {self.target}")
             results = asyncio.run(self.scan_ports())
