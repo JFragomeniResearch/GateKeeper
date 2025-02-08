@@ -33,7 +33,7 @@ def async_test(coro):
 class TestGateKeeper(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        """Set up test environment before any tests run."""
+        """Set up test class."""
         if sys.platform.startswith('win'):
             asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
         cls.loop = asyncio.new_event_loop()
@@ -54,15 +54,20 @@ class TestGateKeeper(unittest.TestCase):
         asyncio.set_event_loop(None)
 
     def setUp(self):
-        """Set up test fixtures before each test method."""
+        """Set up test case."""
         self.scanner = GateKeeper()
         self.scanner.target = "example.com"
         self.scanner.ports = [80, 443]
+        # Create a new event loop for each test
+        self.test_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self.test_loop)
         self.test_target = "localhost"
         self.test_port = 80
 
     def tearDown(self):
-        """Clean up after each test method."""
+        """Clean up after each test."""
+        self.test_loop.close()
+        asyncio.set_event_loop(self.loop)
         # Clean up any test files created
         for file in Path("reports").glob("test_scan_*.txt"):
             file.unlink()
@@ -81,20 +86,15 @@ class TestGateKeeper(unittest.TestCase):
         test_ports = [80, 443]
         self.scanner.ports = test_ports
         
-        # Create mock results
         expected_results = [{'port': port, 'state': 'open'} for port in test_ports]
-        
-        # Create async mock
-        async_mock = AsyncMock(return_value=expected_results)
+        mock_scan = AsyncMock(return_value=expected_results)
         
         async def run_test():
-            with patch.object(self.scanner, 'scan_ports', async_mock):
+            with patch.object(self.scanner, 'scan_ports', new=mock_scan):
                 results = await self.scanner.scan_ports()
                 self.assertEqual(results, expected_results)
-                self.assertEqual(len(results), len(test_ports))
         
-        # Run the async test
-        self.loop.run_until_complete(run_test())
+        self.test_loop.run_until_complete(run_test())
 
     def test_service_identification(self):
         """Test service identification functionality."""
@@ -168,7 +168,7 @@ class TestGateKeeper(unittest.TestCase):
             with self.assertRaises(ValueError):
                 await self.scanner.scan_port(65536)
         
-        self.loop.run_until_complete(test_invalid_port())
+        self.test_loop.run_until_complete(test_invalid_port())
 
     def test_display_disclaimer(self):
         """Test the disclaimer display and user interaction."""
@@ -305,7 +305,7 @@ class TestGateKeeper(unittest.TestCase):
                 result = await self.scanner.scan_port(80)
                 self.assertIsNone(result)
             
-            self.loop.run_until_complete(test_timeout())
+            self.test_loop.run_until_complete(test_timeout())
 
     def test_command_line_arguments(self):
         """Test command line argument parsing."""
@@ -350,7 +350,7 @@ class TestGateKeeper(unittest.TestCase):
                 result = await self.scanner.scan_port(80)
                 self.assertIsNone(result)
             
-            self.loop.run_until_complete(test_timeout())
+            self.test_loop.run_until_complete(test_timeout())
 
     def test_encryption_error_handling(self):
         """Test encryption error scenarios."""
@@ -397,7 +397,7 @@ class TestGateKeeper(unittest.TestCase):
 
         with patch.object(self.scanner, 'scan_port', side_effect=mock_scan):
             self.scanner.ports = [80, 443, 8080]
-            results = self.loop.run_until_complete(self.scanner.scan_ports())
+            results = self.test_loop.run_until_complete(self.scanner.scan_ports())
             
             # Sort results by port for consistent testing
             results.sort(key=lambda x: x['port'])
