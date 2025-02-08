@@ -84,16 +84,17 @@ class TestGateKeeper(unittest.TestCase):
         # Create mock results
         expected_results = [{'port': port, 'state': 'open'} for port in test_ports]
         
-        # Mock the entire scan_ports method
-        with patch.object(
-            self.scanner, 
-            'scan_ports', 
-            return_value=expected_results
-        ):
-            # Run synchronously since we're mocking the async method
-            results = self.scanner.scan_ports()
-            self.assertEqual(results, expected_results)
-            self.assertEqual(len(results), len(test_ports))
+        # Create async mock
+        async_mock = AsyncMock(return_value=expected_results)
+        
+        async def run_test():
+            with patch.object(self.scanner, 'scan_ports', async_mock):
+                results = await self.scanner.scan_ports()
+                self.assertEqual(results, expected_results)
+                self.assertEqual(len(results), len(test_ports))
+        
+        # Run the async test
+        self.loop.run_until_complete(run_test())
 
     def test_service_identification(self):
         """Test service identification functionality."""
