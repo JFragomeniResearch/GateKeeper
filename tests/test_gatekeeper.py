@@ -267,7 +267,16 @@ class TestGateKeeper(unittest.TestCase):
         self.scanner.ports = test_ports
         
         expected_results = [{'port': port, 'state': 'open'} for port in test_ports]
-        mock_scan = AsyncMock(return_value=expected_results)
+        
+        async def mock_scan_single_port(port):
+            await asyncio.sleep(self.scanner.rate_limit)
+            return {'port': port, 'state': 'open'}
+            
+        async def mock_scan():
+            results = []
+            for port in test_ports:
+                results.append(await mock_scan_single_port(port))
+            return results
         
         async def run_test():
             start_time = time.time()
@@ -283,7 +292,6 @@ class TestGateKeeper(unittest.TestCase):
             expected_time = (len(test_ports) - 1) * self.scanner.rate_limit
             self.assertGreaterEqual(elapsed_time, expected_time)
         
-        # Use the class event loop instead of test_loop
         self.loop.run_until_complete(run_test())
 
     def test_encryption_key_generation(self):
