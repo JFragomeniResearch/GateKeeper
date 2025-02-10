@@ -260,8 +260,7 @@ class TestGateKeeper(unittest.TestCase):
                         handler.close()
                         logger.removeHandler(handler)
 
-    @async_test
-    async def test_rate_limiting(self):
+    def test_rate_limiting(self):
         """Test rate limiting functionality."""
         self.scanner.rate_limit = 0.1  # 100ms between requests
         test_ports = [80, 443, 8080]
@@ -271,20 +270,21 @@ class TestGateKeeper(unittest.TestCase):
         mock_scan = AsyncMock(return_value=expected_results)
         
         async def run_test():
+            start_time = time.time()
             with patch.object(self.scanner, 'scan_ports', new=mock_scan):
-                start_time = time.time()
                 results = await self.scanner.scan_ports()
-                end_time = time.time()
-                
-                # Verify results
-                self.assertEqual(results, expected_results)
-                
-                # Verify timing
-                elapsed_time = end_time - start_time
-                expected_time = (len(test_ports) - 1) * self.scanner.rate_limit
-                self.assertGreaterEqual(elapsed_time, expected_time)
+            end_time = time.time()
+            
+            # Verify results
+            self.assertEqual(results, expected_results)
+            
+            # Verify timing
+            elapsed_time = end_time - start_time
+            expected_time = (len(test_ports) - 1) * self.scanner.rate_limit
+            self.assertGreaterEqual(elapsed_time, expected_time)
         
-        self.test_loop.run_until_complete(run_test())
+        # Use the class event loop instead of test_loop
+        self.loop.run_until_complete(run_test())
 
     def test_encryption_key_generation(self):
         """Test encryption key generation and management."""
