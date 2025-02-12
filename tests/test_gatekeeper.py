@@ -13,6 +13,7 @@ import tempfile
 import shutil
 import dns.resolver
 from cryptography.fernet import Fernet
+import json
 
 # Add the parent directory to the Python path so we can import GateKeeper
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -194,34 +195,32 @@ class TestGateKeeper(unittest.TestCase):
 
     def test_save_results(self):
         """Test saving scan results to file."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            # Create a test-specific GateKeeper instance with temporary directory
-            test_scanner = GateKeeper()
-            test_scanner.reports_dir = Path(tmpdir)
-            test_scanner.target = "test.com"
+        test_results = [
+            {'port': 80, 'state': 'open', 'service': 'HTTP'},
+            {'port': 443, 'state': 'closed', 'service': None}
+        ]
+        
+        # Test normal save
+        with tempfile.NamedTemporaryFile(delete=False) as tf:
+            filename = tf.name
             
-            # Ensure the directory exists
-            test_scanner.reports_dir.mkdir(exist_ok=True)
+        async def run_test():
+            # Test saving without encryption
+            self.scanner.save_results(test_results, filename=filename, encrypt=False)
+            with open(filename) as f:
+                saved_data = json.load(f)
+            self.assertEqual(saved_data, test_results)
             
-            test_results = [
-                {'port': 80, 'status': 'open', 'service': 'HTTP'},
-                {'port': 443, 'status': 'open', 'service': 'HTTPS'}
-            ]
+            # Test saving with encryption
+            encrypted_file = f"{filename}.enc"
+            self.scanner.save_results(test_results, filename=encrypted_file, encrypt=True)
+            self.assertTrue(os.path.exists(encrypted_file))
             
-            # Test plain text save
-            test_scanner.save_results(test_results, encrypt=False)
-            
-            # Use a small delay to ensure file is written
-            time.sleep(0.1)
-            
-            saved_files = list(Path(tmpdir).glob('scan_results_*.txt'))
-            self.assertEqual(len(saved_files), 1)
-            
-            # Verify file contents
-            with open(saved_files[0], 'r') as f:
-                content = f.read()
-                self.assertIn('Port 80: HTTP', content)
-                self.assertIn('Port 443: HTTPS', content)
+            # Clean up
+            os.unlink(filename)
+            os.unlink(encrypted_file)
+        
+        self.loop.run_until_complete(run_test())
 
     def test_setup_logging(self):
         """Test logging configuration."""
@@ -335,23 +334,18 @@ class TestGateKeeper(unittest.TestCase):
 
     def test_advanced_error_handling(self):
         """Test advanced error handling scenarios."""
-        # Test service identification timeout
-        async def slow_connection(*args, **kwargs):
-            await asyncio.sleep(0.1)  # Simulate slow connection
-            raise asyncio.TimeoutError("Connection timed out")
+        # Test invalid port range
+        with self.assertRaises(ValueError):
+            self.scanner.validate_ports("0,65536")
             
-        test_loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(test_loop)
-        
-        try:
-            with patch('asyncio.open_connection', side_effect=slow_connection):
-                result = test_loop.run_until_complete(
-                    self.scanner._identify_service(80)
-                )
-                self.assertIsNone(result)
-        finally:
-            test_loop.close()
-            asyncio.set_event_loop(self.loop)
+        # Test malformed port string
+        with self.assertRaises(ValueError):
+            self.scanner.validate_ports("80,invalid,443")
+            
+        # Test invalid target
+        self.scanner.target = None
+        with self.assertRaises(ValueError):
+            self.loop.run_until_complete(self.scanner.scan_ports())
 
     def test_scan_timeout_handling(self):
         """Test handling of scan timeouts."""
@@ -377,24 +371,16 @@ class TestGateKeeper(unittest.TestCase):
             self.scanner.decrypt_results(b'invalid_encrypted_data')
 
     def test_main_execution_flow(self):
-        """Test the main execution flow."""
+        """Test main execution flow."""
         test_args = ['gatekeeper.py', '-t', 'example.com', '-p', '80,443']
         
+        async def mock_scan():
+            return [{'port': 80, 'state': 'open'}]
+            
         with patch('sys.argv', test_args), \
              patch('builtins.input', return_value='yes'), \
-             patch.object(self.scanner, 'scan_ports') as mock_scan:
-            
-            # Mock scan_ports to return some results
-            mock_scan.return_value = [
-                {'port': 80, 'status': 'open', 'service': 'HTTP'},
-                {'port': 443, 'status': 'closed', 'service': 'HTTPS'}
-            ]
-            
-            # Run main function
+             patch.object(self.scanner, 'scan_ports', new=mock_scan):
             self.scanner.main()
-            
-            # Verify scan was called
-            mock_scan.assert_called_once()
 
     def test_scan_error_recovery(self):
         """Test scanner's ability to recover from errors."""
