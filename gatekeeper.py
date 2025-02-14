@@ -11,7 +11,7 @@ import time
 import dns.resolver  # for DNS verification
 from cryptography.fernet import Fernet  # for encryption
 import json
-from typing import List, Tuple, Dict, Optional
+from typing import List, Tuple, Dict, Optional, Any
 from utils.banner import display_banner, display_scan_start, display_scan_complete
 import asyncio
 
@@ -243,8 +243,10 @@ class GateKeeper:
         parser.add_argument('--threads', type=int, default=100, help='Number of concurrent scans')
         return parser.parse_args()
 
-    async def scan_ports(self) -> List[Dict]:
-        """Scan multiple ports concurrently."""
+    async def scan_ports(self) -> List[Dict[str, Any]]:
+        """Scan ports on target."""
+        if not self.target:
+            raise ValueError("Target host is required")
         tasks = []
         for port in self.ports:
             tasks.append(asyncio.create_task(self.scan_port(port)))

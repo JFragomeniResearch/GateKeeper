@@ -201,24 +201,23 @@ class TestGateKeeper(unittest.TestCase):
         ]
         
         # Test normal save
-        with tempfile.NamedTemporaryFile(delete=False) as tf:
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.json') as tf:
             filename = tf.name
             
         async def run_test():
             # Test saving without encryption
-            self.scanner.save_results(test_results, filename=filename, encrypt=False)
-            with open(filename) as f:
+            self.scanner.save_results(test_results, encrypt=False)  # Remove filename parameter
+            with open('scan_results.json') as f:  # Use default filename
                 saved_data = json.load(f)
             self.assertEqual(saved_data, test_results)
             
             # Test saving with encryption
-            encrypted_file = f"{filename}.enc"
-            self.scanner.save_results(test_results, filename=encrypted_file, encrypt=True)
-            self.assertTrue(os.path.exists(encrypted_file))
+            self.scanner.save_results(test_results, encrypt=True)
+            self.assertTrue(os.path.exists('scan_results.json.enc'))
             
             # Clean up
-            os.unlink(filename)
-            os.unlink(encrypted_file)
+            os.remove('scan_results.json')
+            os.remove('scan_results.json.enc')
         
         self.loop.run_until_complete(run_test())
 
@@ -343,9 +342,12 @@ class TestGateKeeper(unittest.TestCase):
             self.scanner.validate_ports("80,invalid,443")
             
         # Test invalid target
-        self.scanner.target = None
-        with self.assertRaises(ValueError):
-            self.loop.run_until_complete(self.scanner.scan_ports())
+        async def run_target_test():
+            self.scanner.target = None
+            with self.assertRaises(ValueError):
+                await self.scanner.scan_ports()
+                
+        self.loop.run_until_complete(run_target_test())
 
     def test_scan_timeout_handling(self):
         """Test handling of scan timeouts."""
