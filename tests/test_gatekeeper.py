@@ -14,6 +14,7 @@ import shutil
 import dns.resolver
 from cryptography.fernet import Fernet
 import json
+import glob
 
 # Add the parent directory to the Python path so we can import GateKeeper
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -200,25 +201,32 @@ class TestGateKeeper(unittest.TestCase):
             {'port': 443, 'state': 'closed', 'service': None}
         ]
         
-        # Test normal save
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.json') as tf:
-            filename = tf.name
-            
+        # Ensure reports directory exists
+        os.makedirs('reports', exist_ok=True)
+        
         async def run_test():
             # Test saving without encryption
-            self.scanner.save_results(test_results, encrypt=False)  # Remove filename parameter
-            with open('scan_results.json') as f:  # Use default filename
-                saved_data = json.load(f)
-            self.assertEqual(saved_data, test_results)
+            self.scanner.save_results(test_results, encrypt=False)
+            
+            # Find the most recent file in reports directory
+            report_files = glob.glob('reports/scan_results_*.txt')
+            latest_file = max(report_files, key=os.path.getctime)
+            
+            with open(latest_file) as f:
+                saved_data = f.read()
+                for result in test_results:
+                    self.assertIn(str(result['port']), saved_data)
+                    self.assertIn(result['state'], saved_data)
             
             # Test saving with encryption
             self.scanner.save_results(test_results, encrypt=True)
-            self.assertTrue(os.path.exists('scan_results.json.enc'))
+            encrypted_files = glob.glob('reports/scan_results_*.txt.enc')
+            self.assertTrue(len(encrypted_files) > 0)
             
             # Clean up
-            os.remove('scan_results.json')
-            os.remove('scan_results.json.enc')
-        
+            for f in report_files + encrypted_files:
+                os.remove(f)
+            
         self.loop.run_until_complete(run_test())
 
     def test_setup_logging(self):
