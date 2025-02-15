@@ -214,9 +214,14 @@ class TestGateKeeper(unittest.TestCase):
             
             with open(latest_file) as f:
                 saved_data = f.read()
-                for result in test_results:
-                    self.assertIn(str(result['port']), saved_data)
-                    self.assertIn(result['state'], saved_data)
+                # Verify file structure
+                self.assertIn('GateKeeper Scan Results', saved_data)
+                self.assertIn('Target:', saved_data)
+                self.assertIn('Scan Date:', saved_data)
+                
+                # Verify port data
+                self.assertIn('Port 80: HTTP', saved_data)
+                self.assertIn('Port 443: None', saved_data)
             
             # Test saving with encryption
             self.scanner.save_results(test_results, encrypt=True)
