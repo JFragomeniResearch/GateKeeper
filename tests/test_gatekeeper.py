@@ -225,11 +225,13 @@ class TestGateKeeper(unittest.TestCase):
             
             # Test saving with encryption
             self.scanner.save_results(test_results, encrypt=True)
-            encrypted_files = glob.glob('reports/scan_results_*.txt.enc')
+            encrypted_files = glob.glob('reports/scan_results_*.encrypted')
             self.assertTrue(len(encrypted_files) > 0)
             
             # Clean up
-            for f in report_files + encrypted_files:
+            for f in report_files:
+                os.remove(f)
+            for f in encrypted_files:
                 os.remove(f)
             
         self.loop.run_until_complete(run_test())
