@@ -48,8 +48,15 @@ class TestGateKeeper(unittest.TestCase):
     def tearDownClass(cls):
         """Clean up test environment after all tests complete."""
         # Clean up test files but keep directories
-        for file in Path('logs').glob('*.log'):
-            file.unlink()
+        try:
+            for file in Path('logs').glob('*.log'):
+                try:
+                    file.unlink(missing_ok=True)
+                except PermissionError:
+                    # Skip files that are locked
+                    continue
+        except Exception as e:
+            print(f"Warning: Cleanup failed - {e}")
         for file in Path('reports').glob('scan_results_*'):
             file.unlink()
         cls.loop.close()
@@ -244,22 +251,24 @@ class TestGateKeeper(unittest.TestCase):
             
             # Test with custom log file
             scanner = GateKeeper()
-            scanner.setup_logging(log_file)
+            scanner._setup_logging(log_file)  # Use correct method name
             
-            async def run_test():
-                # Generate some log messages
-                scanner.logger.info("Test info message")
-                scanner.logger.warning("Test warning message")
-                scanner.logger.error("Test error message")
-                
-                # Verify log file contents
-                with open(log_file) as f:
-                    log_content = f.read()
-                    self.assertIn("Test info message", log_content)
-                    self.assertIn("Test warning message", log_content)
-                    self.assertIn("Test error message", log_content)
+            # Generate some log messages
+            scanner.logger.info("Test info message")
+            scanner.logger.warning("Test warning message")
+            scanner.logger.error("Test error message")
             
-            self.loop.run_until_complete(run_test())
+            # Close all handlers to release file locks
+            for handler in scanner.logger.handlers[:]:
+                handler.close()
+                scanner.logger.removeHandler(handler)
+            
+            # Verify log file contents
+            with open(log_file) as f:
+                log_content = f.read()
+                self.assertIn("Test info message", log_content)
+                self.assertIn("Test warning message", log_content)
+                self.assertIn("Test error message", log_content)
 
     def test_rate_limiting(self):
         """Test rate limiting functionality."""
