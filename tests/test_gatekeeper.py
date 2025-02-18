@@ -237,41 +237,29 @@ class TestGateKeeper(unittest.TestCase):
         self.loop.run_until_complete(run_test())
 
     def test_setup_logging(self):
-        """Test logging configuration."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            # Create log directory structure
-            log_dir = Path(tmpdir) / 'logs'
-            log_dir.mkdir(exist_ok=True)
-            log_file = log_dir / 'gatekeeper.log'
+        """Test logging setup."""
+        # Create a temporary directory for logs
+        with tempfile.TemporaryDirectory() as temp_dir:
+            log_file = os.path.join(temp_dir, 'test.log')
             
-            # Create a test-specific GateKeeper instance
-            test_scanner = GateKeeper()
+            # Test with custom log file
+            scanner = GateKeeper()
+            scanner.setup_logging(log_file)
             
-            # Patch the entire logging setup instead of just the path
-            with patch('logging.FileHandler') as mock_handler:
-                # Configure the mock handler with required attributes
-                handler_instance = MagicMock()
-                handler_instance.level = logging.INFO
-                mock_handler.return_value = handler_instance
+            async def run_test():
+                # Generate some log messages
+                scanner.logger.info("Test info message")
+                scanner.logger.warning("Test warning message")
+                scanner.logger.error("Test error message")
                 
-                logger = test_scanner._setup_logging()
-                
-                try:
-                    # Verify logger configuration
-                    self.assertEqual(logger.name, 'GateKeeper')
-                    self.assertEqual(logger.level, logging.INFO)
-                    
-                    # Test logging functionality
-                    test_message = "Test log message"
-                    logger.info(test_message)
-                    
-                    # Verify handler was called
-                    mock_handler.assert_called_once()
-                finally:
-                    # Clean up handlers to prevent file lock issues
-                    for handler in logger.handlers[:]:
-                        handler.close()
-                        logger.removeHandler(handler)
+                # Verify log file contents
+                with open(log_file) as f:
+                    log_content = f.read()
+                    self.assertIn("Test info message", log_content)
+                    self.assertIn("Test warning message", log_content)
+                    self.assertIn("Test error message", log_content)
+            
+            self.loop.run_until_complete(run_test())
 
     def test_rate_limiting(self):
         """Test rate limiting functionality."""
