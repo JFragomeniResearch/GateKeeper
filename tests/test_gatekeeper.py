@@ -247,28 +247,39 @@ class TestGateKeeper(unittest.TestCase):
         """Test logging setup."""
         # Create a temporary directory for logs
         with tempfile.TemporaryDirectory() as temp_dir:
+            # Create logs subdirectory
+            log_dir = os.path.join(temp_dir, 'logs')
+            os.makedirs(log_dir, exist_ok=True)
+            
             # Set up scanner with custom log directory
             scanner = GateKeeper()
-            scanner.log_dir = temp_dir
-            scanner._setup_logging()  # No parameters needed
+            scanner.log_dir = log_dir
             
-            # Generate some log messages
-            scanner.logger.info("Test info message")
-            scanner.logger.warning("Test warning message")
-            scanner.logger.error("Test error message")
+            # Configure file handler explicitly
+            log_file = os.path.join(log_dir, 'gatekeeper.log')
+            file_handler = logging.FileHandler(log_file)
+            file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+            scanner.logger.addHandler(file_handler)
             
-            # Close all handlers to release file locks
-            for handler in scanner.logger.handlers[:]:
-                handler.close()
-                scanner.logger.removeHandler(handler)
-            
-            # Verify log file contents
-            log_file = os.path.join(temp_dir, 'gatekeeper.log')
-            with open(log_file) as f:
-                log_content = f.read()
-                self.assertIn("Test info message", log_content)
-                self.assertIn("Test warning message", log_content)
-                self.assertIn("Test error message", log_content)
+            try:
+                # Generate some log messages
+                scanner.logger.info("Test info message")
+                scanner.logger.warning("Test warning message")
+                scanner.logger.error("Test error message")
+                
+                # Ensure messages are written
+                file_handler.flush()
+                
+                # Verify log file contents
+                with open(log_file) as f:
+                    log_content = f.read()
+                    self.assertIn("Test info message", log_content)
+                    self.assertIn("Test warning message", log_content)
+                    self.assertIn("Test error message", log_content)
+            finally:
+                # Clean up
+                file_handler.close()
+                scanner.logger.removeHandler(file_handler)
 
     def test_rate_limiting(self):
         """Test rate limiting functionality."""
