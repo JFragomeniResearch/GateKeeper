@@ -247,11 +247,10 @@ class TestGateKeeper(unittest.TestCase):
         """Test logging setup."""
         # Create a temporary directory for logs
         with tempfile.TemporaryDirectory() as temp_dir:
-            log_file = os.path.join(temp_dir, 'test.log')
-            
-            # Test with custom log file
+            # Set up scanner with custom log directory
             scanner = GateKeeper()
-            scanner._setup_logging(log_file)  # Use correct method name
+            scanner.log_dir = temp_dir
+            scanner._setup_logging()  # No parameters needed
             
             # Generate some log messages
             scanner.logger.info("Test info message")
@@ -264,6 +263,7 @@ class TestGateKeeper(unittest.TestCase):
                 scanner.logger.removeHandler(handler)
             
             # Verify log file contents
+            log_file = os.path.join(temp_dir, 'gatekeeper.log')
             with open(log_file) as f:
                 log_content = f.read()
                 self.assertIn("Test info message", log_content)
