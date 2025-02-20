@@ -597,5 +597,37 @@ class TestGateKeeper(unittest.TestCase):
         
         self.loop.run_until_complete(run_test())
 
+    def test_error_handling_comprehensive(self):
+        """Test comprehensive error handling scenarios."""
+        async def run_test():
+            # Test invalid port range
+            with self.assertRaises(ValueError):
+                self.scanner.ports = [-1]
+                
+            # Test connection timeout
+            self.scanner.timeout = 0.001  # Very short timeout
+            self.scanner.target = "example.com"
+            self.scanner.ports = [80]
+            with self.assertLogs(level='ERROR') as logs:
+                await self.scanner.scan_ports()
+                self.assertIn("Timeout", "".join(logs.output))
+                
+            # Test service identification error
+            async def mock_open_connection(*args, **kwargs):
+                raise ConnectionRefusedError("Connection refused")
+                
+            with patch('asyncio.open_connection', mock_open_connection):
+                with self.assertLogs(level='ERROR') as logs:
+                    await self.scanner._identify_service(80)
+                    self.assertIn("Connection refused", "".join(logs.output))
+                    
+            # Test main execution error
+            with patch.object(self.scanner, 'scan_ports', side_effect=Exception("Test error")):
+                with self.assertLogs(level='ERROR') as logs:
+                    self.scanner.run()
+                    self.assertIn("Test error", "".join(logs.output))
+        
+        self.loop.run_until_complete(run_test())
+
 if __name__ == '__main__':
     unittest.main() 
