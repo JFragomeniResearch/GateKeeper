@@ -374,15 +374,13 @@ class TestGateKeeper(unittest.TestCase):
 
     def test_scan_timeout_handling(self):
         """Test handling of scan timeouts."""
-        # Mock socket to simulate timeout
-        with patch('socket.socket') as mock_socket:
-            mock_socket.return_value.connect_ex.side_effect = socket.timeout
-            
-            async def test_timeout():
-                result = await self.scanner.scan_port(80)
-                self.assertIsNone(result)
-            
-            self.test_loop.run_until_complete(test_timeout())
+        async def run_test():
+            self.scanner.timeout = 0.001
+            with self.assertLogs(level='ERROR') as logs:
+                await self.scanner.scan_ports()
+                self.assertIn("Timeout", "".join(logs.output))
+                
+        self.loop.run_until_complete(run_test())
 
     def test_encryption_error_handling(self):
         """Test encryption error scenarios."""
@@ -602,7 +600,7 @@ class TestGateKeeper(unittest.TestCase):
         async def run_test():
             # Test invalid port range
             with self.assertRaises(ValueError):
-                self.scanner.ports = [-1]
+                self.scanner.validate_ports("0,65536")  # Use validate_ports directly
                 
             # Test connection timeout
             self.scanner.timeout = 0.001  # Very short timeout
@@ -622,9 +620,12 @@ class TestGateKeeper(unittest.TestCase):
                     self.assertIn("Connection refused", "".join(logs.output))
                     
             # Test main execution error
-            with patch.object(self.scanner, 'scan_ports', side_effect=Exception("Test error")):
+            async def mock_scan_error(*args, **kwargs):
+                raise Exception("Test error")
+                
+            with patch.object(self.scanner, 'scan_ports', new=mock_scan_error):
                 with self.assertLogs(level='ERROR') as logs:
-                    self.scanner.run()
+                    await self.scanner.run()  # Make run async
                     self.assertIn("Test error", "".join(logs.output))
         
         self.loop.run_until_complete(run_test())
