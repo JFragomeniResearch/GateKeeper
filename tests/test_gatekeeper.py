@@ -376,9 +376,18 @@ class TestGateKeeper(unittest.TestCase):
         """Test handling of scan timeouts."""
         async def run_test():
             self.scanner.timeout = 0.001
-            with self.assertLogs(level='ERROR') as logs:
-                await self.scanner.scan_ports()
-                self.assertIn("Timeout", "".join(logs.output))
+            self.scanner.target = "localhost"  # Use localhost
+            self.scanner.ports = [80]
+            
+            # Mock socket to simulate timeout
+            async def mock_open_connection(*args, **kwargs):
+                await asyncio.sleep(0.1)  # Sleep longer than timeout
+                return None, None
+                
+            with patch('asyncio.open_connection', mock_open_connection):
+                with self.assertLogs(level='ERROR') as logs:
+                    await self.scanner.scan_ports()
+                    self.assertIn("timed out", "".join(logs.output).lower())
                 
         self.loop.run_until_complete(run_test())
 
@@ -600,21 +609,27 @@ class TestGateKeeper(unittest.TestCase):
         async def run_test():
             # Test invalid port range
             with self.assertRaises(ValueError):
-                self.scanner.validate_ports("0,65536")  # Use validate_ports directly
+                self.scanner.validate_ports("0,65536")
                 
             # Test connection timeout
-            self.scanner.timeout = 0.001  # Very short timeout
-            self.scanner.target = "example.com"
+            self.scanner.timeout = 0.001
+            self.scanner.target = "localhost"
             self.scanner.ports = [80]
-            with self.assertLogs(level='ERROR') as logs:
-                await self.scanner.scan_ports()
-                self.assertIn("Timeout", "".join(logs.output))
+            
+            async def mock_timeout(*args, **kwargs):
+                await asyncio.sleep(0.1)
+                return None, None
                 
+            with patch('asyncio.open_connection', mock_timeout):
+                with self.assertLogs(level='ERROR') as logs:
+                    await self.scanner.scan_ports()
+                    self.assertIn("timed out", "".join(logs.output).lower())
+                    
             # Test service identification error
-            async def mock_open_connection(*args, **kwargs):
+            async def mock_connection_error(*args, **kwargs):
                 raise ConnectionRefusedError("Connection refused")
                 
-            with patch('asyncio.open_connection', mock_open_connection):
+            with patch('asyncio.open_connection', mock_connection_error):
                 with self.assertLogs(level='ERROR') as logs:
                     await self.scanner._identify_service(80)
                     self.assertIn("Connection refused", "".join(logs.output))
@@ -625,7 +640,7 @@ class TestGateKeeper(unittest.TestCase):
                 
             with patch.object(self.scanner, 'scan_ports', new=mock_scan_error):
                 with self.assertLogs(level='ERROR') as logs:
-                    await self.scanner.run()  # Make run async
+                    await self.scanner.run()
                     self.assertIn("Test error", "".join(logs.output))
         
         self.loop.run_until_complete(run_test())
