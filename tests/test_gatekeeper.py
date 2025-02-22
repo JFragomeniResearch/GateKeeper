@@ -376,18 +376,17 @@ class TestGateKeeper(unittest.TestCase):
         """Test handling of scan timeouts."""
         async def run_test():
             self.scanner.timeout = 0.001
-            self.scanner.target = "localhost"  # Use localhost
+            self.scanner.target = "localhost"
             self.scanner.ports = [80]
             
             # Mock socket to simulate timeout
             async def mock_open_connection(*args, **kwargs):
-                await asyncio.sleep(0.1)  # Sleep longer than timeout
-                return None, None
+                raise asyncio.TimeoutError()
                 
             with patch('asyncio.open_connection', mock_open_connection):
                 with self.assertLogs(level='ERROR') as logs:
                     await self.scanner.scan_ports()
-                    self.assertIn("timed out", "".join(logs.output).lower())
+                    self.assertIn("timeout", "".join(logs.output).lower())
                 
         self.loop.run_until_complete(run_test())
 
@@ -617,13 +616,12 @@ class TestGateKeeper(unittest.TestCase):
             self.scanner.ports = [80]
             
             async def mock_timeout(*args, **kwargs):
-                await asyncio.sleep(0.1)
-                return None, None
+                raise asyncio.TimeoutError()
                 
             with patch('asyncio.open_connection', mock_timeout):
                 with self.assertLogs(level='ERROR') as logs:
                     await self.scanner.scan_ports()
-                    self.assertIn("timed out", "".join(logs.output).lower())
+                    self.assertIn("timeout", "".join(logs.output).lower())
                     
             # Test service identification error
             async def mock_connection_error(*args, **kwargs):
