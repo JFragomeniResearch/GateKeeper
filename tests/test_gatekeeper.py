@@ -379,11 +379,11 @@ class TestGateKeeper(unittest.TestCase):
             self.scanner.target = "localhost"
             self.scanner.ports = [80]
             
-            # Mock socket to simulate timeout
-            async def mock_open_connection(*args, **kwargs):
+            # Mock asyncio.wait_for to simulate timeout
+            async def mock_wait_for(*args, **kwargs):
                 raise asyncio.TimeoutError()
                 
-            with patch('asyncio.open_connection', mock_open_connection):
+            with patch('asyncio.wait_for', mock_wait_for):
                 with self.assertLogs(level='ERROR') as logs:
                     await self.scanner.scan_ports()
                     self.assertIn("timeout", "".join(logs.output).lower())
@@ -615,10 +615,10 @@ class TestGateKeeper(unittest.TestCase):
             self.scanner.target = "localhost"
             self.scanner.ports = [80]
             
-            async def mock_timeout(*args, **kwargs):
+            async def mock_wait_for(*args, **kwargs):
                 raise asyncio.TimeoutError()
                 
-            with patch('asyncio.open_connection', mock_timeout):
+            with patch('asyncio.wait_for', mock_wait_for):
                 with self.assertLogs(level='ERROR') as logs:
                     await self.scanner.scan_ports()
                     self.assertIn("timeout", "".join(logs.output).lower())
