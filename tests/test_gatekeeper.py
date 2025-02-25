@@ -383,7 +383,7 @@ class TestGateKeeper(unittest.TestCase):
             async def mock_scan(*args, **kwargs):
                 raise asyncio.TimeoutError("Connection timed out")
                 
-            with patch.object(self.scanner, '_scan_port', side_effect=mock_scan):
+            with patch.object(self.scanner, 'scan_port', side_effect=mock_scan):
                 with self.assertLogs('GateKeeper', level='ERROR') as logs:
                     await self.scanner.scan_ports()
                     self.assertIn("timed out", "".join(logs.output).lower())
@@ -618,7 +618,7 @@ class TestGateKeeper(unittest.TestCase):
             async def mock_scan(*args, **kwargs):
                 raise asyncio.TimeoutError("Connection timed out")
                 
-            with patch.object(self.scanner, '_scan_port', side_effect=mock_scan):
+            with patch.object(self.scanner, 'scan_port', side_effect=mock_scan):
                 with self.assertLogs('GateKeeper', level='ERROR') as logs:
                     await self.scanner.scan_ports()
                     self.assertIn("timed out", "".join(logs.output).lower())
