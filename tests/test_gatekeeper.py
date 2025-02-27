@@ -382,13 +382,15 @@ class TestGateKeeper(unittest.TestCase):
             # Mock the actual scan function to raise timeout
             async def mock_scan(*args, **kwargs):
                 raise asyncio.TimeoutError("Connection timed out")
-                
-            # Use side_effect instead of new to preserve the coroutine nature
+            
+            # Use a context manager to properly clean up the patch
             with patch.object(self.scanner, 'scan_port', side_effect=mock_scan):
                 with self.assertLogs('GateKeeper', level='ERROR') as logs:
-                    await self.scanner.scan_ports()
+                    # Ensure we await the result
+                    result = await self.scanner.scan_ports()
                     self.assertIn("timed out", "".join(logs.output).lower())
                 
+        # Run the test
         self.loop.run_until_complete(run_test())
 
     def test_encryption_error_handling(self):
@@ -403,16 +405,12 @@ class TestGateKeeper(unittest.TestCase):
             self.scanner.decrypt_results(b'invalid_encrypted_data')
 
     def test_main_execution_flow(self):
-        """Test main execution flow."""
-        test_args = ['gatekeeper.py', '-t', 'example.com', '-p', '80,443']
-        
-        async def mock_scan():
-            return [{'port': 80, 'state': 'open'}]
-            
-        with patch('sys.argv', test_args), \
-             patch('builtins.input', return_value='yes'), \
-             patch.object(self.scanner, 'scan_ports', new=mock_scan):
-            self.scanner.main()
+        """Test the main execution flow including argument parsing."""
+        # Test with command line arguments
+        with patch('sys.argv', ['gatekeeper.py', '-t', 'localhost', '-p', '80,443']):
+            with patch.object(GateKeeper, 'scan_ports', return_value=None):
+                # This should cover lines 269-280
+                GateKeeper.main()
 
     def test_scan_error_recovery(self):
         """Test scanner's ability to recover from errors."""
@@ -643,6 +641,39 @@ class TestGateKeeper(unittest.TestCase):
                     await self.scanner.scan_ports()
                     self.assertIn("Test error", "".join(logs.output))
         
+        self.loop.run_until_complete(run_test())
+
+    def test_service_identification_edge_cases(self):
+        """Test edge cases in service identification."""
+        async def run_test():
+            # Test with various response patterns
+            reader_mock = MagicMock()
+            writer_mock = MagicMock()
+            
+            # Test with HTTP response
+            reader_mock.read.return_value = b"HTTP/1.1 200 OK\r\n"
+            with patch('asyncio.open_connection', return_value=(reader_mock, writer_mock)):
+                service = await self.scanner._identify_service(80)
+                self.assertEqual(service, "HTTP")
+                
+            # Test with SSH response
+            reader_mock.read.return_value = b"SSH-2.0-OpenSSH_8.2p1\r\n"
+            with patch('asyncio.open_connection', return_value=(reader_mock, writer_mock)):
+                service = await self.scanner._identify_service(22)
+                self.assertEqual(service, "SSH")
+                
+            # Test with FTP response
+            reader_mock.read.return_value = b"220 FTP server ready\r\n"
+            with patch('asyncio.open_connection', return_value=(reader_mock, writer_mock)):
+                service = await self.scanner._identify_service(21)
+                self.assertEqual(service, "FTP")
+                
+            # Test with unknown response (line 124)
+            reader_mock.read.return_value = b"UNKNOWN SERVICE\r\n"
+            with patch('asyncio.open_connection', return_value=(reader_mock, writer_mock)):
+                service = await self.scanner._identify_service(8080)
+                self.assertEqual(service, "Unknown")
+                
         self.loop.run_until_complete(run_test())
 
 if __name__ == '__main__':
