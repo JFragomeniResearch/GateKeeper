@@ -656,43 +656,38 @@ class TestGateKeeper(unittest.TestCase):
         """Test edge cases in service identification."""
         async def run_test():
             # Test with various response patterns
-            # Create proper async mock for reader
-            reader_mock = MagicMock()
-            writer_mock = MagicMock()
+            # Use AsyncMock instead of MagicMock for async functions
+            from unittest.mock import AsyncMock
             
             # Test with HTTP response
-            async def mock_read_http():
-                return b"HTTP/1.1 200 OK\r\n"
-                
-            reader_mock.read = mock_read_http
+            reader_mock = AsyncMock()
+            reader_mock.read.return_value = b"HTTP/1.1 200 OK\r\n"
+            writer_mock = MagicMock()
             
             with patch('asyncio.open_connection', return_value=(reader_mock, writer_mock)):
                 service = await self.scanner._identify_service(80)
                 self.assertEqual(service, "HTTP")
 
             # Test with SSH response
-            async def mock_read_ssh():
-                return b"SSH-2.0-OpenSSH_8.2p1\r\n"
-
-            reader_mock.read = mock_read_ssh
+            reader_mock = AsyncMock()
+            reader_mock.read.return_value = b"SSH-2.0-OpenSSH_8.2p1\r\n"
+            
             with patch('asyncio.open_connection', return_value=(reader_mock, writer_mock)):
                 service = await self.scanner._identify_service(22)
                 self.assertEqual(service, "SSH")
 
             # Test with FTP response
-            async def mock_read_ftp():
-                return b"220 FTP server ready\r\n"
-
-            reader_mock.read = mock_read_ftp
+            reader_mock = AsyncMock()
+            reader_mock.read.return_value = b"220 FTP server ready\r\n"
+            
             with patch('asyncio.open_connection', return_value=(reader_mock, writer_mock)):
                 service = await self.scanner._identify_service(21)
                 self.assertEqual(service, "FTP")
 
             # Test with unknown response
-            async def mock_read_unknown():
-                return b"UNKNOWN SERVICE\r\n"
-
-            reader_mock.read = mock_read_unknown
+            reader_mock = AsyncMock()
+            reader_mock.read.return_value = b"UNKNOWN SERVICE\r\n"
+            
             with patch('asyncio.open_connection', return_value=(reader_mock, writer_mock)):
                 service = await self.scanner._identify_service(8080)
                 self.assertEqual(service, "Unknown")
