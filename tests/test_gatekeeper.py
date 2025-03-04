@@ -2,7 +2,7 @@ import unittest
 import socket
 import logging
 import time
-from unittest.mock import Mock, patch, MagicMock, call, AsyncMock
+from unittest.mock import Mock, patch, MagicMock, call, AsyncMock, create_autospec
 from pathlib import Path
 import sys
 import os
@@ -654,44 +654,52 @@ class TestGateKeeper(unittest.TestCase):
 
     def test_service_identification_edge_cases(self):
         """Test edge cases in service identification."""
+        from unittest.mock import create_autospec
+        
         async def run_test():
-            # Test with various response patterns
-            # Use AsyncMock instead of MagicMock for async functions
-            from unittest.mock import AsyncMock
+            # Create a mock for asyncio.open_connection that returns properly configured reader/writer
+            async def mock_open_connection(host, port, timeout=None):
+                reader = create_autospec(asyncio.StreamReader)
+                writer = create_autospec(asyncio.StreamWriter)
+                
+                # Configure the reader based on the port
+                if port == 80:
+                    async def mock_read():
+                        return b"HTTP/1.1 200 OK\r\n"
+                    reader.read.side_effect = mock_read
+                elif port == 22:
+                    async def mock_read():
+                        return b"SSH-2.0-OpenSSH_8.2p1\r\n"
+                    reader.read.side_effect = mock_read
+                elif port == 21:
+                    async def mock_read():
+                        return b"220 FTP server ready\r\n"
+                    reader.read.side_effect = mock_read
+                else:
+                    async def mock_read():
+                        return b"UNKNOWN SERVICE\r\n"
+                    reader.read.side_effect = mock_read
+                    
+                return reader, writer
             
-            # Test with HTTP response
-            reader_mock = AsyncMock()
-            reader_mock.read.return_value = b"HTTP/1.1 200 OK\r\n"
-            writer_mock = MagicMock()
-            
-            with patch('asyncio.open_connection', return_value=(reader_mock, writer_mock)):
+            # Patch the open_connection function
+            with patch('asyncio.open_connection', side_effect=mock_open_connection):
+                # Test HTTP identification
                 service = await self.scanner._identify_service(80)
                 self.assertEqual(service, "HTTP")
-
-            # Test with SSH response
-            reader_mock = AsyncMock()
-            reader_mock.read.return_value = b"SSH-2.0-OpenSSH_8.2p1\r\n"
-            
-            with patch('asyncio.open_connection', return_value=(reader_mock, writer_mock)):
+                
+                # Test SSH identification
                 service = await self.scanner._identify_service(22)
                 self.assertEqual(service, "SSH")
-
-            # Test with FTP response
-            reader_mock = AsyncMock()
-            reader_mock.read.return_value = b"220 FTP server ready\r\n"
-            
-            with patch('asyncio.open_connection', return_value=(reader_mock, writer_mock)):
+                
+                # Test FTP identification
                 service = await self.scanner._identify_service(21)
                 self.assertEqual(service, "FTP")
-
-            # Test with unknown response
-            reader_mock = AsyncMock()
-            reader_mock.read.return_value = b"UNKNOWN SERVICE\r\n"
-            
-            with patch('asyncio.open_connection', return_value=(reader_mock, writer_mock)):
+                
+                # Test unknown service
                 service = await self.scanner._identify_service(8080)
                 self.assertEqual(service, "Unknown")
-
+        
         self.loop.run_until_complete(run_test())
 
 if __name__ == '__main__':
