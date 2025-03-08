@@ -14,6 +14,7 @@ import json
 from typing import List, Tuple, Dict, Optional, Any
 from utils.banner import display_banner, display_scan_start, display_scan_complete
 import asyncio
+from tqdm import tqdm
 
 class GateKeeper:
     def __init__(self):
@@ -244,25 +245,29 @@ class GateKeeper:
         return parser.parse_args()
 
     async def scan_ports(self) -> List[Dict[str, Any]]:
-        """Scan ports on target."""
-        if not self.target:
-            raise ValueError("Target host is required")
-        tasks = []
-        for port in self.ports:
-            tasks.append(asyncio.create_task(self.scan_port(port)))
+        """
+        Scan the target for open ports using asyncio for concurrency.
+        Returns a list of dictionaries with port and service information.
+        """
+        self.logger.info(f"Starting port scan on {self.target} for ports {self.ports}")
         
-        results = []
-        for task in asyncio.as_completed(tasks):
-            try:
-                result = await task
-                if result:
-                    results.append(result)
-            except Exception as e:
-                self.logger.error(f"Error during port scan: {e}")
+        open_ports = []
+        semaphore = asyncio.Semaphore(self.threads)
         
-        # Sort results by port number for consistency
-        results.sort(key=lambda x: x['port'])
-        return results
+        # Create tasks for all ports
+        tasks = [self.scan_port(port) for port in self.ports]
+        
+        # Set up progress bar
+        with tqdm(total=len(tasks), desc="Scanning ports", unit="port") as progress_bar:
+            # Process tasks as they complete
+            for future in asyncio.as_completed(tasks):
+                result = await future
+                if result:  # If port is open
+                    open_ports.append(result)
+                progress_bar.update(1)
+        
+        self.logger.info(f"Scan complete. Found {len(open_ports)} open ports")
+        return open_ports
 
     def validate_target(self, target: str) -> str:
         """Validate target hostname or IP address."""
