@@ -15,6 +15,10 @@ from typing import List, Tuple, Dict, Optional, Any
 from utils.banner import display_banner, display_scan_start, display_scan_complete
 import asyncio
 from tqdm import tqdm
+from colorama import init, Fore, Style
+
+# Initialize colorama
+init(autoreset=True)  # Automatically reset colors after each print
 
 class GateKeeper:
     def __init__(self):
@@ -244,13 +248,14 @@ class GateKeeper:
         parser.add_argument('--threads', type=int, default=100, help='Number of concurrent scans')
         return parser.parse_args()
 
-    async def scan_ports(self) -> List[Dict[str, Any]]:
+    async def scan_ports(self):
         """
         Scan the target for open ports using asyncio for concurrency.
         Returns a list of dictionaries with port and service information.
         """
         self.logger.info(f"Starting port scan on {self.target} for ports {self.ports}")
         
+        start_time = time.time()
         open_ports = []
         semaphore = asyncio.Semaphore(self.threads)
         
@@ -266,7 +271,10 @@ class GateKeeper:
                     open_ports.append(result)
                 progress_bar.update(1)
         
-        self.logger.info(f"Scan complete. Found {len(open_ports)} open ports")
+        scan_duration = time.time() - start_time
+        
+        print(f"\n{Fore.CYAN}Scan completed in {scan_duration:.2f} seconds{Style.RESET_ALL}")
+        self.logger.info(f"Scan complete. Found {len(open_ports)} open ports in {scan_duration:.2f} seconds")
         return open_ports
 
     def validate_target(self, target: str) -> str:
@@ -283,6 +291,28 @@ class GateKeeper:
             raise ValueError("Invalid target format")
             
         return target
+
+    def display_results(self, results):
+        """Display scan results in a formatted, colorized way."""
+        if not results:
+            print(f"{Fore.YELLOW}No open ports found on {self.target}{Style.RESET_ALL}")
+            return
+        
+        print(f"\n{Fore.CYAN}=== Scan Results for {self.target} ==={Style.RESET_ALL}")
+        print(f"{Fore.GREEN}Found {len(results)} open ports:{Style.RESET_ALL}")
+        
+        # Create a formatted table
+        print(f"\n{Fore.CYAN}{'PORT':<10}{'STATE':<10}{'SERVICE':<15}{'VERSION':<20}{Style.RESET_ALL}")
+        print("-" * 55)
+        
+        for result in results:
+            port = result.get('port', 'N/A')
+            service = result.get('service', 'Unknown')
+            version = result.get('version', '')
+            
+            print(f"{Fore.GREEN}{port:<10}{'open':<10}{Style.RESET_ALL}{service:<15}{version:<20}")
+        
+        print(f"\n{Fore.CYAN}Scan completed at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}{Style.RESET_ALL}")
 
     def main(self):
         """Main execution flow."""
@@ -303,6 +333,7 @@ class GateKeeper:
             
             # Save results
             self.save_results(results, encrypt=True)
+            self.display_results(results)
             self.logger.info("Scan complete")
             
         except Exception as e:
