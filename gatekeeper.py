@@ -16,6 +16,7 @@ from utils.banner import display_banner, display_scan_start, display_scan_comple
 import asyncio
 from tqdm import tqdm
 from colorama import init, Fore, Style
+import ipaddress
 
 # Initialize colorama
 init(autoreset=True)  # Automatically reset colors after each print
@@ -239,14 +240,49 @@ class GateKeeper:
         except ValueError as e:
             raise ValueError(f"Invalid port specification: {e}")
 
-    def parse_arguments(self) -> argparse.Namespace:
+    def parse_arguments(self):
         """Parse command line arguments."""
-        parser = argparse.ArgumentParser(description='GateKeeper Port Scanner')
-        parser.add_argument('-t', '--target', required=True, help='Target host to scan')
-        parser.add_argument('-p', '--ports', required=True, help='Ports to scan (comma-separated)')
-        parser.add_argument('--timeout', type=float, default=1.0, help='Timeout for each port scan')
-        parser.add_argument('--threads', type=int, default=100, help='Number of concurrent scans')
+        parser = argparse.ArgumentParser(
+            description="GateKeeper - Network Security Scanner",
+            formatter_class=argparse.ArgumentDefaultsHelpFormatter
+        )
+        parser.add_argument('-t', '--target', required=True, help='Target IP address or hostname or CIDR range')
+        parser.add_argument('-p', '--ports', default='1-1000', help='Port(s) to scan (e.g., 80,443 or 1-1000)')
+        parser.add_argument('--timeout', type=float, default=1.0, help='Timeout for connection attempts')
+        parser.add_argument('--threads', type=int, default=100, help='Number of concurrent threads')
+        parser.add_argument('-o', '--output', help='Output file for results')
+        parser.add_argument('-v', '--verbose', action='store_true', help='Enable verbose output')
+        
         return parser.parse_args()
+
+    def expand_targets(self, target):
+        """
+        Expand target to a list of IP addresses if it's a CIDR range.
+        Returns a list of target IP addresses.
+        """
+        try:
+            # Check if the target is a CIDR range
+            if '/' in target:
+                network = ipaddress.ip_network(target, strict=False)
+                # Convert to list of strings and limit to a reasonable number
+                ip_list = [str(ip) for ip in network.hosts()]
+                
+                # If the range is large, warn the user
+                if len(ip_list) > 256:
+                    print(f"{Fore.YELLOW}Warning: Large IP range detected ({len(ip_list)} hosts). This may take a while.{Style.RESET_ALL}")
+                    confirm = input("Do you want to continue? (y/n): ").lower()
+                    if confirm != 'y':
+                        self.logger.info("Scan cancelled by user due to large IP range")
+                        sys.exit(0)
+                
+                return ip_list
+            else:
+                # Single target
+                return [target]
+        except ValueError:
+            # Not a valid CIDR, assume it's a hostname
+            self.logger.info(f"Target {target} is not a valid CIDR range, treating as hostname")
+            return [target]
 
     async def scan_ports(self):
         """
@@ -322,22 +358,56 @@ class GateKeeper:
             self.ports = self.validate_ports(args.ports)
             self.timeout = args.timeout
             self.threads = args.threads
+            self.verbose = args.verbose
 
             self.display_disclaimer()
-            if input("Do you want to continue? (yes/no): ").lower() != 'yes':
+            if input("Do you accept these terms? (yes/no): ").lower().strip() != 'yes':
                 self.logger.info("Scan cancelled by user")
-                sys.exit(0)  # Add explicit exit for cancellation
+                sys.exit(0)
 
-            self.logger.info(f"Starting scan of {self.target}")
-            results = asyncio.run(self.scan_ports())
+            # Expand targets if CIDR notation is used
+            targets = self.expand_targets(self.target)
             
-            # Save results
-            self.save_results(results, encrypt=True)
-            self.display_results(results)
+            all_results = {}
+            total_start_time = time.time()
+            
+            # Scan each target
+            for i, target in enumerate(targets):
+                if len(targets) > 1:
+                    print(f"\n{Fore.CYAN}Scanning target {i+1}/{len(targets)}: {target}{Style.RESET_ALL}")
+                
+                self.target = target  # Update current target
+                self.logger.info(f"Starting scan of {self.target}")
+                
+                results = asyncio.run(self.scan_ports())
+                all_results[target] = results
+                
+                # Display results for this target
+                self.display_results(results)
+                
+                # Save results for this target
+                if args.output:
+                    self.save_results(results, filename=f"{args.output}_{target.replace('.', '_')}.json", encrypt=True)
+            
+            total_duration = time.time() - total_start_time
+            
+            # Display summary if multiple targets were scanned
+            if len(targets) > 1:
+                print(f"\n{Fore.CYAN}=== Scan Summary ==={Style.RESET_ALL}")
+                print(f"Scanned {len(targets)} targets in {total_duration:.2f} seconds")
+                
+                total_open = sum(len(results) for results in all_results.values())
+                print(f"{Fore.GREEN}Found {total_open} open ports across all targets{Style.RESET_ALL}")
+            
             self.logger.info("Scan complete")
-            
+
+        except KeyboardInterrupt:
+            print(f"\n{Fore.YELLOW}Scan interrupted by user{Style.RESET_ALL}")
+            self.logger.info("Scan interrupted by user")
+            sys.exit(0)
         except Exception as e:
             self.logger.error(f"Error during execution: {e}")
+            print(f"{Fore.RED}Error: {e}{Style.RESET_ALL}")
             sys.exit(1)
 
 def main():
