@@ -17,6 +17,7 @@ import asyncio
 from tqdm import tqdm
 from colorama import init, Fore, Style
 import ipaddress
+import re
 
 # Initialize colorama
 init(autoreset=True)  # Automatically reset colors after each print
@@ -107,33 +108,151 @@ class GateKeeper:
             return None
 
     async def _identify_service(self, port: int) -> Optional[str]:
-        """Identify service running on a port."""
+        """
+        Identify the service running on a specific port.
+        Returns the service name and version if detected.
+        """
         try:
-            reader, writer = await asyncio.open_connection(self.target, port)
+            reader, writer = await asyncio.open_connection(
+                self.target, port, timeout=self.timeout
+            )
+            
+            # Send appropriate probes based on common port numbers
+            probe_data = b""
+            if port == 80 or port == 443 or port == 8080:
+                # HTTP probe
+                probe_data = b"GET / HTTP/1.1\r\nHost: " + self.target.encode() + b"\r\n\r\n"
+            elif port == 21:
+                # FTP probe - just connect, no need to send data
+                pass
+            elif port == 22:
+                # SSH probe - just connect, no need to send data
+                pass
+            elif port == 25 or port == 587:
+                # SMTP probe
+                probe_data = b"EHLO gatekeeper.scan\r\n"
+            elif port == 110:
+                # POP3 probe
+                pass
+            elif port == 143:
+                # IMAP probe
+                pass
+            elif port == 3306:
+                # MySQL probe
+                pass
+            
+            # Send probe if we have one
+            if probe_data:
+                writer.write(probe_data)
+                await writer.drain()
+            
+            # Read response with timeout
+            response = await asyncio.wait_for(reader.read(1024), timeout=self.timeout)
+            
+            # Close the connection
+            writer.close()
+            await writer.wait_closed()
+            
+            # Decode response if possible
             try:
-                # Send appropriate probe for each service
-                if port == 22:
-                    writer.write(b'SSH-2.0-GateKeeper\r\n')
-                    await writer.drain()
-                    response = await reader.readline()
-                    if b'SSH' in response:
-                        return 'SSH'
-                elif port == 80:
-                    writer.write(b'GET / HTTP/1.0\r\n\r\n')
-                    await writer.drain()
-                    response = await reader.readline()
-                    if b'HTTP' in response:
-                        return 'HTTP'
-                elif port == 443:
-                    return 'HTTPS'  # HTTPS detection is passive
-                
-                return f'Unknown-{port}'
-            finally:
-                writer.close()
-                await writer.wait_closed()
+                response_str = response.decode('utf-8', errors='ignore')
+            except:
+                response_str = str(response)
+            
+            # Identify service and version based on response
+            service_info = {"name": "Unknown", "version": ""}
+            
+            # HTTP detection
+            if b"HTTP/" in response:
+                service_info["name"] = "HTTP"
+                # Try to extract server info
+                server_match = re.search(r"Server: ([^\r\n]+)", response_str)
+                if server_match:
+                    service_info["version"] = server_match.group(1)
+            
+            # SSH detection
+            elif b"SSH-" in response:
+                service_info["name"] = "SSH"
+                # Extract SSH version
+                ssh_match = re.search(r"SSH-\d+\.\d+-([^\r\n]+)", response_str)
+                if ssh_match:
+                    service_info["version"] = ssh_match.group(1)
+            
+            # FTP detection
+            elif b"FTP" in response or b"220" in response and (b"ftp" in response.lower() or port == 21):
+                service_info["name"] = "FTP"
+                # Extract FTP server version
+                ftp_match = re.search(r"220[- ]([^\r\n]+)", response_str)
+                if ftp_match:
+                    service_info["version"] = ftp_match.group(1)
+            
+            # SMTP detection
+            elif b"SMTP" in response or b"220" in response and b"mail" in response.lower():
+                service_info["name"] = "SMTP"
+                # Extract SMTP server version
+                smtp_match = re.search(r"220[- ]([^\r\n]+)", response_str)
+                if smtp_match:
+                    service_info["version"] = smtp_match.group(1)
+            
+            # MySQL detection
+            elif b"mysql" in response.lower() or port == 3306:
+                service_info["name"] = "MySQL"
+                # Extract MySQL version if possible
+                mysql_match = re.search(r"([0-9]+\.[0-9]+\.[0-9]+)", response_str)
+                if mysql_match:
+                    service_info["version"] = mysql_match.group(1)
+            
+            # If no specific service detected, use port number as a hint
+            if service_info["name"] == "Unknown":
+                common_ports = {
+                    21: "FTP",
+                    22: "SSH",
+                    23: "Telnet",
+                    25: "SMTP",
+                    53: "DNS",
+                    80: "HTTP",
+                    110: "POP3",
+                    143: "IMAP",
+                    443: "HTTPS",
+                    465: "SMTPS",
+                    587: "SMTP",
+                    993: "IMAPS",
+                    995: "POP3S",
+                    3306: "MySQL",
+                    3389: "RDP",
+                    5432: "PostgreSQL",
+                    8080: "HTTP-Proxy"
+                }
+                service_info["name"] = common_ports.get(port, f"Unknown-{port}")
+            
+            return service_info
+        
+        except asyncio.TimeoutError:
+            # Connection timed out, but port is open
+            common_ports = {
+                21: "FTP",
+                22: "SSH",
+                23: "Telnet",
+                25: "SMTP",
+                53: "DNS",
+                80: "HTTP",
+                110: "POP3",
+                143: "IMAP",
+                443: "HTTPS",
+                465: "SMTPS",
+                587: "SMTP",
+                993: "IMAPS",
+                995: "POP3S",
+                3306: "MySQL",
+                3389: "RDP",
+                5432: "PostgreSQL",
+                8080: "HTTP-Proxy"
+            }
+            return {"name": common_ports.get(port, f"Unknown-{port}"), "version": ""}
+        
         except Exception as e:
             self.logger.error(f"Service identification failed for port {port}: {e}")
-            return None
+            return {"name": f"Unknown-{port}", "version": ""}
 
     def encrypt_results(self, results: List[Dict]) -> bytes:
         """Encrypt scan results"""
@@ -338,15 +457,15 @@ class GateKeeper:
         print(f"{Fore.GREEN}Found {len(results)} open ports:{Style.RESET_ALL}")
         
         # Create a formatted table
-        print(f"\n{Fore.CYAN}{'PORT':<10}{'STATE':<10}{'SERVICE':<15}{'VERSION':<20}{Style.RESET_ALL}")
-        print("-" * 55)
+        print(f"\n{Fore.CYAN}{'PORT':<10}{'STATE':<10}{'SERVICE':<15}{'VERSION':<30}{Style.RESET_ALL}")
+        print("-" * 65)
         
         for result in results:
             port = result.get('port', 'N/A')
             service = result.get('service', 'Unknown')
             version = result.get('version', '')
             
-            print(f"{Fore.GREEN}{port:<10}{'open':<10}{Style.RESET_ALL}{service:<15}{version:<20}")
+            print(f"{Fore.GREEN}{port:<10}{'open':<10}{Style.RESET_ALL}{service:<15}{version:<30}")
         
         print(f"\n{Fore.CYAN}Scan completed at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}{Style.RESET_ALL}")
 
