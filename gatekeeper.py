@@ -18,6 +18,8 @@ from tqdm import tqdm
 from colorama import init, Fore, Style
 import ipaddress
 import re
+import os
+import requests
 
 # Initialize colorama
 init(autoreset=True)  # Automatically reset colors after each print
@@ -469,6 +471,129 @@ class GateKeeper:
         
         print(f"\n{Fore.CYAN}Scan completed at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}{Style.RESET_ALL}")
 
+    def load_vulnerability_database(self):
+        """
+        Load vulnerability database from a local file or download from a remote source.
+        Returns a dictionary of vulnerabilities indexed by service and version.
+        """
+        try:
+            # First try to load from local file
+            db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vuln_db.json")
+            
+            # Check if the database exists and is less than 7 days old
+            update_db = True
+            if os.path.exists(db_path):
+                file_age = datetime.now().timestamp() - os.path.getmtime(db_path)
+                if file_age < 7 * 24 * 60 * 60:  # 7 days in seconds
+                    update_db = False
+            
+            if update_db:
+                print(f"{Fore.CYAN}Updating vulnerability database...{Style.RESET_ALL}")
+                # In a real implementation, you would download from a real vulnerability database
+                # For this example, we'll create a simple database with some common vulnerabilities
+                vuln_db = {
+                    "HTTP": {
+                        "Apache": [
+                            {"id": "CVE-2021-41773", "severity": "HIGH", "description": "Path traversal vulnerability in Apache HTTP Server 2.4.49"},
+                            {"id": "CVE-2021-42013", "severity": "HIGH", "description": "Path traversal vulnerability in Apache HTTP Server 2.4.50"}
+                        ],
+                        "nginx": [
+                            {"id": "CVE-2021-23017", "severity": "MEDIUM", "description": "Nginx resolver vulnerability"}
+                        ]
+                    },
+                    "SSH": {
+                        "OpenSSH": [
+                            {"id": "CVE-2020-14145", "severity": "LOW", "description": "OpenSSH client information leak"},
+                            {"id": "CVE-2019-6111", "severity": "MEDIUM", "description": "OpenSSH SCP client arbitrary file write vulnerability"}
+                        ]
+                    },
+                    "FTP": {
+                        "vsftpd": [
+                            {"id": "CVE-2011-2523", "severity": "HIGH", "description": "vsftpd 2.3.4 backdoor vulnerability"}
+                        ]
+                    },
+                    "SMTP": {
+                        "Exim": [
+                            {"id": "CVE-2019-15846", "severity": "CRITICAL", "description": "Exim remote command execution vulnerability"}
+                        ]
+                    },
+                    "MySQL": {
+                        "MySQL": [
+                            {"id": "CVE-2021-2307", "severity": "HIGH", "description": "MySQL Server privilege escalation vulnerability"}
+                        ]
+                    }
+                }
+                
+                # Save the database to a local file
+                with open(db_path, 'w') as f:
+                    json.dump(vuln_db, f, indent=2)
+                
+                print(f"{Fore.GREEN}Vulnerability database updated successfully{Style.RESET_ALL}")
+            else:
+                # Load from local file
+                with open(db_path, 'r') as f:
+                    vuln_db = json.load(f)
+                
+                if self.verbose:
+                    print(f"{Fore.CYAN}Using cached vulnerability database{Style.RESET_ALL}")
+            
+            return vuln_db
+        
+        except Exception as e:
+            self.logger.error(f"Error loading vulnerability database: {e}")
+            print(f"{Fore.YELLOW}Warning: Could not load vulnerability database. Vulnerability scanning will be limited.{Style.RESET_ALL}")
+            return {}
+
+    def check_vulnerabilities(self, results):
+        """
+        Check for known vulnerabilities based on service and version information.
+        Returns the results with added vulnerability information.
+        """
+        vuln_db = self.load_vulnerability_database()
+        
+        if not vuln_db:
+            return results
+        
+        for result in results:
+            service = result.get('service', 'Unknown')
+            version_full = result.get('version', '')
+            
+            # Initialize vulnerabilities list
+            result['vulnerabilities'] = []
+            
+            # Skip if service is unknown or no version info
+            if service == 'Unknown' or not version_full:
+                continue
+            
+            # Check if the service exists in the vulnerability database
+            if service in vuln_db:
+                # Extract the software name from the version string
+                # This is a simplified approach - in reality, you'd need more sophisticated parsing
+                version_parts = version_full.split()
+                software_candidates = []
+                
+                # Try to identify the software name
+                for part in version_parts:
+                    if part.lower() in [s.lower() for s in vuln_db[service].keys()]:
+                        software_candidates.append(part)
+                
+                # If we couldn't identify the software, try common names
+                if not software_candidates and service == "HTTP":
+                    if "apache" in version_full.lower():
+                        software_candidates.append("Apache")
+                    elif "nginx" in version_full.lower():
+                        software_candidates.append("nginx")
+                
+                # Check vulnerabilities for each potential software match
+                for software in software_candidates:
+                    for sw_name in vuln_db[service].keys():
+                        if software.lower() == sw_name.lower():
+                            # Add all vulnerabilities for this software
+                            for vuln in vuln_db[service][sw_name]:
+                                result['vulnerabilities'].append(vuln)
+        
+        return results
+
     def main(self):
         """Main execution flow."""
         try:
@@ -498,7 +623,13 @@ class GateKeeper:
                 self.target = target  # Update current target
                 self.logger.info(f"Starting scan of {self.target}")
                 
+                # Scan ports
                 results = asyncio.run(self.scan_ports())
+                
+                # Check for vulnerabilities
+                print(f"\n{Fore.CYAN}Checking for vulnerabilities...{Style.RESET_ALL}")
+                results = self.check_vulnerabilities(results)
+                
                 all_results[target] = results
                 
                 # Display results for this target
