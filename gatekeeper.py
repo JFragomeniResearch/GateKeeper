@@ -20,6 +20,8 @@ import ipaddress
 import re
 import os
 import requests
+import csv
+import html
 
 # Initialize colorama
 init(autoreset=True)  # Automatically reset colors after each print
@@ -274,30 +276,199 @@ class GateKeeper:
         except Exception as e:
             raise ValueError(f"Failed to decrypt results: {e}")
 
-    def save_results(self, results: List[Dict], encrypt: bool = False) -> None:
-        """Save scan results to file"""
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    def save_results(self, results, filename=None, encrypt=False, format='json'):
+        """
+        Save scan results to a file in the specified format.
+        Supports JSON, CSV, and HTML formats.
+        """
+        if not results:
+            self.logger.warning("No results to save")
+            return False
         
-        # Ensure reports directory exists
-        self.reports_dir.mkdir(exist_ok=True)
+        if not filename:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"gatekeeper_scan_{timestamp}"
         
-        if encrypt:
-            filename = self.reports_dir / f'scan_results_{timestamp}.encrypted'
-            encrypted_data = self.encrypt_results(results)
-            with open(filename, 'wb') as f:
-                f.write(encrypted_data)
-        else:
-            filename = self.reports_dir / f'scan_results_{timestamp}.txt'
-            with open(filename, 'w') as f:
-                f.write(f"GateKeeper Scan Results\n")
-                f.write(f"Target: {self.target}\n")
-                f.write(f"Scan Date: {timestamp}\n")
-                f.write(f"{'='*50}\n\n")
+        # Remove any extension from the filename
+        filename = os.path.splitext(filename)[0]
+        
+        try:
+            # Save in JSON format
+            if format in ['json', 'all']:
+                json_file = f"{filename}.json"
+                with open(json_file, 'w') as f:
+                    json_data = {
+                        "scan_info": {
+                            "target": self.target,
+                            "timestamp": datetime.now().isoformat(),
+                            "ports_scanned": len(self.ports),
+                            "open_ports_found": len(results)
+                        },
+                        "results": results
+                    }
+                    json.dump(json_data, f, indent=2)
                 
-                for result in results:
-                    f.write(f"Port {result['port']}: {result['service']}\n")
-
-        self.logger.info(f"Results saved to {filename}")
+                if encrypt:
+                    self._encrypt_file(json_file)
+                    self.logger.info(f"Results saved and encrypted to {json_file}.enc")
+                    print(f"{Fore.GREEN}Results saved and encrypted to {json_file}.enc{Style.RESET_ALL}")
+                else:
+                    self.logger.info(f"Results saved to {json_file}")
+                    print(f"{Fore.GREEN}Results saved to {json_file}{Style.RESET_ALL}")
+            
+            # Save in CSV format
+            if format in ['csv', 'all']:
+                csv_file = f"{filename}.csv"
+                with open(csv_file, 'w', newline='') as f:
+                    # Determine all possible fields from results
+                    fieldnames = ['port', 'state', 'service', 'version']
+                    
+                    # Check if we have vulnerability data
+                    has_vulns = any('vulnerabilities' in result for result in results)
+                    if has_vulns:
+                        fieldnames.extend(['vuln_id', 'severity', 'description'])
+                    
+                    writer = csv.DictWriter(f, fieldnames=fieldnames)
+                    writer.writeheader()
+                    
+                    for result in results:
+                        # Base row with port information
+                        row = {
+                            'port': result.get('port', ''),
+                            'state': result.get('state', ''),
+                            'service': result.get('service', ''),
+                            'version': result.get('version', '')
+                        }
+                        
+                        # If no vulnerabilities, write the row as is
+                        if not has_vulns or 'vulnerabilities' not in result or not result['vulnerabilities']:
+                            writer.writerow(row)
+                        else:
+                            # Write a row for each vulnerability
+                            for vuln in result['vulnerabilities']:
+                                vuln_row = row.copy()
+                                vuln_row['vuln_id'] = vuln.get('id', '')
+                                vuln_row['severity'] = vuln.get('severity', '')
+                                vuln_row['description'] = vuln.get('description', '')
+                                writer.writerow(vuln_row)
+                
+                self.logger.info(f"Results saved to {csv_file}")
+                print(f"{Fore.GREEN}Results saved to {csv_file}{Style.RESET_ALL}")
+            
+            # Save in HTML format
+            if format in ['html', 'all']:
+                html_file = f"{filename}.html"
+                with open(html_file, 'w') as f:
+                    # Create a simple HTML report
+                    html_content = f"""<!DOCTYPE html>
+<html>
+<head>
+    <title>GateKeeper Scan Report - {html.escape(self.target)}</title>
+    <style>
+        body {{ font-family: Arial, sans-serif; margin: 20px; }}
+        h1, h2 {{ color: #2c3e50; }}
+        table {{ border-collapse: collapse; width: 100%; margin-bottom: 20px; }}
+        th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
+        th {{ background-color: #f2f2f2; }}
+        tr:nth-child(even) {{ background-color: #f9f9f9; }}
+        .critical {{ color: #e74c3c; font-weight: bold; }}
+        .high {{ color: #e67e22; font-weight: bold; }}
+        .medium {{ color: #f1c40f; }}
+        .low {{ color: #27ae60; }}
+        .footer {{ margin-top: 30px; font-size: 0.8em; color: #7f8c8d; }}
+    </style>
+</head>
+<body>
+    <h1>GateKeeper Scan Report</h1>
+    <p><strong>Target:</strong> {html.escape(self.target)}</p>
+    <p><strong>Scan Date:</strong> {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</p>
+    <p><strong>Open Ports:</strong> {len(results)} out of {len(self.ports)} scanned</p>
+    
+    <h2>Open Ports</h2>
+    <table>
+        <tr>
+            <th>Port</th>
+            <th>State</th>
+            <th>Service</th>
+            <th>Version</th>
+        </tr>
+"""
+                    
+                    # Add rows for each open port
+                    for result in results:
+                        port = result.get('port', '')
+                        state = result.get('state', '')
+                        service = result.get('service', '')
+                        version = result.get('version', '')
+                        
+                        html_content += f"""        <tr>
+            <td>{port}</td>
+            <td>{state}</td>
+            <td>{service}</td>
+            <td>{html.escape(version)}</td>
+        </tr>
+"""
+                    
+                    # Check if we have vulnerability data
+                    has_vulns = any('vulnerabilities' in result and result['vulnerabilities'] for result in results)
+                    if has_vulns:
+                        html_content += """    </table>
+    
+    <h2>Potential Vulnerabilities</h2>
+    <table>
+        <tr>
+            <th>Port</th>
+            <th>Service</th>
+            <th>Severity</th>
+            <th>CVE ID</th>
+            <th>Description</th>
+        </tr>
+"""
+                        
+                        # Add rows for each vulnerability
+                        for result in results:
+                            if 'vulnerabilities' in result and result['vulnerabilities']:
+                                port = result.get('port', '')
+                                service = result.get('service', '')
+                                
+                                for vuln in result['vulnerabilities']:
+                                    severity = vuln.get('severity', '')
+                                    vuln_id = vuln.get('id', '')
+                                    description = vuln.get('description', '')
+                                    
+                                    # Add CSS class based on severity
+                                    severity_class = severity.lower() if severity.lower() in ['critical', 'high', 'medium', 'low'] else ''
+                                    
+                                    html_content += f"""        <tr>
+            <td>{port}</td>
+            <td>{service}</td>
+            <td class="{severity_class}">{severity}</td>
+            <td>{vuln_id}</td>
+            <td>{html.escape(description)}</td>
+        </tr>
+"""
+                    
+                    # Close the HTML document
+                    html_content += """    </table>
+    
+    <div class="footer">
+        <p>Generated by GateKeeper Network Security Scanner</p>
+    </div>
+</body>
+</html>
+"""
+                    
+                    f.write(html_content)
+                
+                self.logger.info(f"Results saved to {html_file}")
+                print(f"{Fore.GREEN}Results saved to {html_file}{Style.RESET_ALL}")
+            
+            return True
+        
+        except Exception as e:
+            self.logger.error(f"Error saving results: {e}")
+            print(f"{Fore.RED}Error saving results: {e}{Style.RESET_ALL}")
+            return False
 
     def display_disclaimer(self) -> bool:
         """
@@ -367,12 +538,15 @@ class GateKeeper:
             description="GateKeeper - Network Security Scanner",
             formatter_class=argparse.ArgumentDefaultsHelpFormatter
         )
-        parser.add_argument('-t', '--target', required=True, help='Target IP address or hostname or CIDR range')
+        parser.add_argument('-t', '--target', required=True, help='Target IP address, hostname, or CIDR range')
         parser.add_argument('-p', '--ports', default='1-1000', help='Port(s) to scan (e.g., 80,443 or 1-1000)')
         parser.add_argument('--timeout', type=float, default=1.0, help='Timeout for connection attempts')
         parser.add_argument('--threads', type=int, default=100, help='Number of concurrent threads')
-        parser.add_argument('-o', '--output', help='Output file for results')
+        parser.add_argument('-o', '--output', help='Output file for results (without extension)')
+        parser.add_argument('-f', '--format', choices=['json', 'csv', 'html', 'all'], default='json',
+                            help='Output format for results')
         parser.add_argument('-v', '--verbose', action='store_true', help='Enable verbose output')
+        parser.add_argument('--no-vuln-check', action='store_true', help='Disable vulnerability checking')
         
         return parser.parse_args()
 
@@ -626,9 +800,10 @@ class GateKeeper:
                 # Scan ports
                 results = asyncio.run(self.scan_ports())
                 
-                # Check for vulnerabilities
-                print(f"\n{Fore.CYAN}Checking for vulnerabilities...{Style.RESET_ALL}")
-                results = self.check_vulnerabilities(results)
+                # Check for vulnerabilities if not disabled
+                if not args.no_vuln_check:
+                    print(f"\n{Fore.CYAN}Checking for vulnerabilities...{Style.RESET_ALL}")
+                    results = self.check_vulnerabilities(results)
                 
                 all_results[target] = results
                 
@@ -637,7 +812,8 @@ class GateKeeper:
                 
                 # Save results for this target
                 if args.output:
-                    self.save_results(results, filename=f"{args.output}_{target.replace('.', '_')}.json", encrypt=True)
+                    output_file = f"{args.output}_{target.replace('.', '_')}" if len(targets) > 1 else args.output
+                    self.save_results(results, filename=output_file, encrypt=False, format=args.format)
             
             total_duration = time.time() - total_start_time
             
