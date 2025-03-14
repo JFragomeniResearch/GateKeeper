@@ -22,6 +22,8 @@ import os
 import requests
 import csv
 import html
+import yaml
+import shutil
 
 # Initialize colorama
 init(autoreset=True)  # Automatically reset colors after each print
@@ -538,17 +540,48 @@ class GateKeeper:
             description="GateKeeper - Network Security Scanner",
             formatter_class=argparse.ArgumentDefaultsHelpFormatter
         )
-        parser.add_argument('-t', '--target', required=True, help='Target IP address, hostname, or CIDR range')
-        parser.add_argument('-p', '--ports', default='1-1000', help='Port(s) to scan (e.g., 80,443 or 1-1000)')
-        parser.add_argument('--timeout', type=float, default=1.0, help='Timeout for connection attempts')
-        parser.add_argument('--threads', type=int, default=100, help='Number of concurrent threads')
-        parser.add_argument('-o', '--output', help='Output file for results (without extension)')
-        parser.add_argument('-f', '--format', choices=['json', 'csv', 'html', 'all'], default='json',
-                            help='Output format for results')
-        parser.add_argument('-v', '--verbose', action='store_true', help='Enable verbose output')
-        parser.add_argument('--no-vuln-check', action='store_true', help='Disable vulnerability checking')
         
-        return parser.parse_args()
+        # Create subparsers for different commands
+        subparsers = parser.add_subparsers(dest='command', help='Command to execute')
+        
+        # Scan command
+        scan_parser = subparsers.add_parser('scan', help='Perform a port scan')
+        scan_parser.add_argument('-t', '--target', help='Target IP address, hostname, or CIDR range')
+        scan_parser.add_argument('-p', '--ports', default='1-1000', help='Port(s) to scan (e.g., 80,443 or 1-1000)')
+        scan_parser.add_argument('--timeout', type=float, default=1.0, help='Timeout for connection attempts')
+        scan_parser.add_argument('--threads', type=int, default=100, help='Number of concurrent threads')
+        scan_parser.add_argument('-o', '--output', help='Output file for results (without extension)')
+        scan_parser.add_argument('-f', '--format', choices=['json', 'csv', 'html', 'all'], default='json',
+                            help='Output format for results')
+        scan_parser.add_argument('-v', '--verbose', action='store_true', help='Enable verbose output')
+        scan_parser.add_argument('--no-vuln-check', action='store_true', help='Disable vulnerability checking')
+        scan_parser.add_argument('--profile', help='Load settings from a saved profile')
+        scan_parser.add_argument('--save-profile', help='Save current settings as a profile')
+        scan_parser.add_argument('--description', help='Description for the saved profile')
+        
+        # Profile commands
+        profile_parser = subparsers.add_parser('profile', help='Manage configuration profiles')
+        profile_subparsers = profile_parser.add_subparsers(dest='profile_command', help='Profile command')
+        
+        # List profiles
+        list_parser = profile_subparsers.add_parser('list', help='List available profiles')
+        
+        # Show profile details
+        show_parser = profile_subparsers.add_parser('show', help='Show profile details')
+        show_parser.add_argument('name', help='Profile name')
+        
+        # Delete profile
+        delete_parser = profile_subparsers.add_parser('delete', help='Delete a profile')
+        delete_parser.add_argument('name', help='Profile name')
+        
+        # For backward compatibility, if no command is specified, default to 'scan'
+        args = parser.parse_args()
+        if not args.command:
+            args.command = 'scan'
+            # Re-parse with default command
+            args = parser.parse_args(['scan'] + sys.argv[1:])
+        
+        return args
 
     def expand_targets(self, target):
         """
@@ -768,64 +801,267 @@ class GateKeeper:
         
         return results
 
+    def save_config_profile(self, profile_name, args):
+        """
+        Save the current scan configuration as a profile.
+        """
+        try:
+            # Create config directory if it doesn't exist
+            config_dir = Path.home() / '.gatekeeper' / 'profiles'
+            config_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Create the configuration dictionary
+            config = {
+                'target': args.target,
+                'ports': args.ports,
+                'timeout': args.timeout,
+                'threads': args.threads,
+                'format': args.format,
+                'no_vuln_check': args.no_vuln_check,
+                'verbose': args.verbose,
+                'created_at': datetime.now().isoformat(),
+                'description': args.description if hasattr(args, 'description') else ''
+            }
+            
+            # Save the configuration to a YAML file
+            config_file = config_dir / f"{profile_name}.yaml"
+            with open(config_file, 'w') as f:
+                yaml.dump(config, f, default_flow_style=False)
+            
+            print(f"{Fore.GREEN}Configuration profile '{profile_name}' saved successfully{Style.RESET_ALL}")
+            self.logger.info(f"Configuration profile '{profile_name}' saved to {config_file}")
+            return True
+        
+        except Exception as e:
+            print(f"{Fore.RED}Error saving configuration profile: {e}{Style.RESET_ALL}")
+            self.logger.error(f"Error saving configuration profile: {e}")
+            return False
+
+    def load_config_profile(self, profile_name):
+        """
+        Load a saved scan configuration profile.
+        Returns a namespace object similar to what argparse would return.
+        """
+        try:
+            # Find the profile file
+            config_dir = Path.home() / '.gatekeeper' / 'profiles'
+            config_file = config_dir / f"{profile_name}.yaml"
+            
+            if not config_file.exists():
+                print(f"{Fore.RED}Profile '{profile_name}' not found{Style.RESET_ALL}")
+                self.logger.error(f"Profile '{profile_name}' not found at {config_file}")
+                return None
+            
+            # Load the configuration from the YAML file
+            with open(config_file, 'r') as f:
+                config = yaml.safe_load(f)
+            
+            # Convert to a namespace object
+            args = argparse.Namespace()
+            for key, value in config.items():
+                setattr(args, key, value)
+            
+            print(f"{Fore.GREEN}Loaded configuration profile '{profile_name}'{Style.RESET_ALL}")
+            if hasattr(args, 'description') and args.description:
+                print(f"{Fore.CYAN}Description: {args.description}{Style.RESET_ALL}")
+            
+            self.logger.info(f"Loaded configuration profile '{profile_name}' from {config_file}")
+            return args
+        
+        except Exception as e:
+            print(f"{Fore.RED}Error loading configuration profile: {e}{Style.RESET_ALL}")
+            self.logger.error(f"Error loading configuration profile: {e}")
+            return None
+
+    def list_config_profiles(self):
+        """
+        List all available configuration profiles.
+        """
+        try:
+            # Find all profile files
+            config_dir = Path.home() / '.gatekeeper' / 'profiles'
+            
+            if not config_dir.exists():
+                print(f"{Fore.YELLOW}No configuration profiles found{Style.RESET_ALL}")
+                return []
+            
+            profiles = list(config_dir.glob('*.yaml'))
+            
+            if not profiles:
+                print(f"{Fore.YELLOW}No configuration profiles found{Style.RESET_ALL}")
+                return []
+            
+            print(f"{Fore.CYAN}Available configuration profiles:{Style.RESET_ALL}")
+            
+            profile_info = []
+            for profile_path in profiles:
+                profile_name = profile_path.stem
+                
+                # Load the profile to get additional info
+                try:
+                    with open(profile_path, 'r') as f:
+                        config = yaml.safe_load(f)
+                    
+                    created_at = config.get('created_at', 'Unknown')
+                    if isinstance(created_at, str):
+                        try:
+                            created_at = datetime.fromisoformat(created_at).strftime('%Y-%m-%d %H:%M')
+                        except:
+                            pass
+                    
+                    target = config.get('target', 'Unknown')
+                    description = config.get('description', '')
+                    
+                    profile_info.append({
+                        'name': profile_name,
+                        'target': target,
+                        'created_at': created_at,
+                        'description': description
+                    })
+                    
+                    print(f"  {Fore.GREEN}{profile_name}{Style.RESET_ALL}")
+                    print(f"    Target: {target}")
+                    print(f"    Created: {created_at}")
+                    if description:
+                        print(f"    Description: {description}")
+                    print()
+                
+        except Exception as e:
+                    print(f"  {Fore.YELLOW}{profile_name} (Error: {e}){Style.RESET_ALL}")
+                    profile_info.append({'name': profile_name, 'error': str(e)})
+            
+            return profile_info
+        
+        except Exception as e:
+            print(f"{Fore.RED}Error listing configuration profiles: {e}{Style.RESET_ALL}")
+            self.logger.error(f"Error listing configuration profiles: {e}")
+            return []
+
+    def delete_config_profile(self, profile_name):
+        """
+        Delete a saved configuration profile.
+        """
+        try:
+            # Find the profile file
+            config_dir = Path.home() / '.gatekeeper' / 'profiles'
+            config_file = config_dir / f"{profile_name}.yaml"
+            
+            if not config_file.exists():
+                print(f"{Fore.RED}Profile '{profile_name}' not found{Style.RESET_ALL}")
+                return False
+            
+            # Delete the file
+            config_file.unlink()
+            
+            print(f"{Fore.GREEN}Deleted configuration profile '{profile_name}'{Style.RESET_ALL}")
+            self.logger.info(f"Deleted configuration profile '{profile_name}'")
+            return True
+        
+        except Exception as e:
+            print(f"{Fore.RED}Error deleting configuration profile: {e}{Style.RESET_ALL}")
+            self.logger.error(f"Error deleting configuration profile: {e}")
+            return False
+
     def main(self):
         """Main execution flow."""
         try:
             args = self.parse_arguments()
-            self.target = args.target
-            self.ports = self.validate_ports(args.ports)
-            self.timeout = args.timeout
-            self.threads = args.threads
-            self.verbose = args.verbose
-
-            self.display_disclaimer()
-            if input("Do you accept these terms? (yes/no): ").lower().strip() != 'yes':
-                self.logger.info("Scan cancelled by user")
-                sys.exit(0)
-
-            # Expand targets if CIDR notation is used
-            targets = self.expand_targets(self.target)
             
-            all_results = {}
-            total_start_time = time.time()
+            # Handle profile commands
+            if args.command == 'profile':
+                if args.profile_command == 'list':
+                    self.list_config_profiles()
+                    return
+                elif args.profile_command == 'show':
+                    profile = self.load_config_profile(args.name)
+                    if profile:
+                        print(f"\n{Fore.CYAN}Profile details:{Style.RESET_ALL}")
+                        for key, value in vars(profile).items():
+                            if key != 'description':  # Already displayed
+                                print(f"  {key}: {value}")
+                    return
+                elif args.profile_command == 'delete':
+                    self.delete_config_profile(args.name)
+                    return
             
-            # Scan each target
-            for i, target in enumerate(targets):
+            # Handle scan command
+            elif args.command == 'scan':
+                # Load profile if specified
+                if args.profile:
+                    profile_args = self.load_config_profile(args.profile)
+                    if not profile_args:
+            sys.exit(1)
+
+                    # Override profile settings with command line arguments
+                    for key, value in vars(args).items():
+                        if key not in ['command', 'profile'] and value is not None:
+                            setattr(profile_args, key, value)
+                    
+                    args = profile_args
+                
+                # Check if target is specified
+                if not args.target:
+                    print(f"{Fore.RED}Error: Target is required{Style.RESET_ALL}")
+                    sys.exit(1)
+                
+                self.target = args.target
+                self.ports = self.validate_ports(args.ports)
+                self.timeout = args.timeout
+                self.threads = args.threads
+                self.verbose = args.verbose
+
+                self.display_disclaimer()
+                if input("Do you accept these terms? (yes/no): ").lower().strip() != 'yes':
+                    self.logger.info("Scan cancelled by user")
+                    sys.exit(0)
+                
+                # Save profile if requested
+                if args.save_profile:
+                    self.save_config_profile(args.save_profile, args)
+
+                # Expand targets if CIDR notation is used
+                targets = self.expand_targets(self.target)
+                
+                all_results = {}
+                total_start_time = time.time()
+                
+                # Scan each target
+                for i, target in enumerate(targets):
+                    if len(targets) > 1:
+                        print(f"\n{Fore.CYAN}Scanning target {i+1}/{len(targets)}: {target}{Style.RESET_ALL}")
+                    
+                    self.target = target  # Update current target
+                    self.logger.info(f"Starting scan of {self.target}")
+                    
+                    # Scan ports
+                    results = asyncio.run(self.scan_ports())
+                    
+                    # Check for vulnerabilities if not disabled
+                    if not args.no_vuln_check:
+                        print(f"\n{Fore.CYAN}Checking for vulnerabilities...{Style.RESET_ALL}")
+                        results = self.check_vulnerabilities(results)
+                    
+                    all_results[target] = results
+                    
+                    # Display results for this target
+                    self.display_results(results)
+                    
+                    # Save results for this target
+                    if args.output:
+                        output_file = f"{args.output}_{target.replace('.', '_')}" if len(targets) > 1 else args.output
+                        self.save_results(results, filename=output_file, encrypt=False, format=args.format)
+                
+                total_duration = time.time() - total_start_time
+                
+                # Display summary if multiple targets were scanned
                 if len(targets) > 1:
-                    print(f"\n{Fore.CYAN}Scanning target {i+1}/{len(targets)}: {target}{Style.RESET_ALL}")
+                    print(f"\n{Fore.CYAN}=== Scan Summary ==={Style.RESET_ALL}")
+                    print(f"Scanned {len(targets)} targets in {total_duration:.2f} seconds")
+                    
+                    total_open = sum(len(results) for results in all_results.values())
+                    print(f"{Fore.GREEN}Found {total_open} open ports across all targets{Style.RESET_ALL}")
                 
-                self.target = target  # Update current target
-                self.logger.info(f"Starting scan of {self.target}")
-                
-                # Scan ports
-                results = asyncio.run(self.scan_ports())
-                
-                # Check for vulnerabilities if not disabled
-                if not args.no_vuln_check:
-                    print(f"\n{Fore.CYAN}Checking for vulnerabilities...{Style.RESET_ALL}")
-                    results = self.check_vulnerabilities(results)
-                
-                all_results[target] = results
-                
-                # Display results for this target
-                self.display_results(results)
-                
-                # Save results for this target
-                if args.output:
-                    output_file = f"{args.output}_{target.replace('.', '_')}" if len(targets) > 1 else args.output
-                    self.save_results(results, filename=output_file, encrypt=False, format=args.format)
-            
-            total_duration = time.time() - total_start_time
-            
-            # Display summary if multiple targets were scanned
-            if len(targets) > 1:
-                print(f"\n{Fore.CYAN}=== Scan Summary ==={Style.RESET_ALL}")
-                print(f"Scanned {len(targets)} targets in {total_duration:.2f} seconds")
-                
-                total_open = sum(len(results) for results in all_results.values())
-                print(f"{Fore.GREEN}Found {total_open} open ports across all targets{Style.RESET_ALL}")
-            
-            self.logger.info("Scan complete")
+                self.logger.info("Scan complete")
 
         except KeyboardInterrupt:
             print(f"\n{Fore.YELLOW}Scan interrupted by user{Style.RESET_ALL}")
