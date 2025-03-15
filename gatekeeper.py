@@ -24,6 +24,9 @@ import csv
 import html
 import yaml
 import shutil
+import py_cui
+import threading
+import queue
 
 # Initialize colorama
 init(autoreset=True)  # Automatically reset colors after each print
@@ -574,6 +577,9 @@ class GateKeeper:
         delete_parser = profile_subparsers.add_parser('delete', help='Delete a profile')
         delete_parser.add_argument('name', help='Profile name')
         
+        # Interactive mode
+        interactive_parser = subparsers.add_parser('interactive', help='Start interactive TUI mode')
+        
         # For backward compatibility, if no command is specified, default to 'scan'
         args = parser.parse_args()
         if not args.command:
@@ -962,13 +968,300 @@ class GateKeeper:
             self.logger.error(f"Error deleting configuration profile: {e}")
             return False
 
+    def start_interactive_mode(self):
+        """
+        Start the interactive terminal user interface.
+        """
+        # Initialize the CUI with 8 rows and 6 columns
+        root = py_cui.PyCUI(8, 6)
+        root.set_title('GateKeeper - Network Security Scanner')
+        
+        # Set color scheme
+        root.set_status_bar_text('GateKeeper Interactive Mode | Press q to exit')
+        
+        # Create a queue for communication between scan thread and UI
+        self.message_queue = queue.Queue()
+        self.scan_running = False
+        self.current_results = {}
+        
+        # Create widgets
+        # Target input
+        target_input = root.add_text_box('Target', 0, 0, 2, 3)
+        target_input.set_text(self.target if hasattr(self, 'target') else '')
+        
+        # Ports input
+        ports_input = root.add_text_box('Ports', 0, 3, 2, 3)
+        ports_input.set_text(','.join(map(str, self.ports)) if hasattr(self, 'ports') else '1-1000')
+        
+        # Options menu
+        options_menu = root.add_checkbox_menu('Options', 2, 0, 2, 2)
+        options_menu.add_item_list(['Vulnerability Check', 'Verbose Output', 'Save Results'])
+        options_menu.add_key_command(py_cui.keys.KEY_ENTER, self.toggle_option)
+        
+        # Output format menu
+        format_menu = root.add_scroll_menu('Output Format', 2, 2, 2, 2)
+        format_menu.add_item_list(['JSON', 'CSV', 'HTML', 'All'])
+        format_menu.add_key_command(py_cui.keys.KEY_ENTER, self.select_format)
+        
+        # Scan button
+        scan_button = root.add_button('Start Scan', 2, 4, 2, 2)
+        scan_button.command = self.start_scan_thread
+        
+        # Results window
+        self.results_window = root.add_text_block('Scan Results', 4, 0, 4, 4)
+        self.results_window.set_text('No scan results yet. Configure scan parameters and press "Start Scan".')
+        
+        # Details window
+        self.details_window = root.add_text_block('Details', 4, 4, 4, 2)
+        self.details_window.set_text('Select a result to view details.')
+        
+        # Store widgets for access in other methods
+        self.widgets = {
+            'target_input': target_input,
+            'ports_input': ports_input,
+            'options_menu': options_menu,
+            'format_menu': format_menu,
+            'scan_button': scan_button,
+            'results_window': self.results_window,
+            'details_window': self.details_window
+        }
+        
+        # Set up a callback to check the message queue
+        root.set_refresh_timeout(0.1)
+        root.set_on_draw_update_func(self.check_message_queue)
+        
+        # Start the CUI
+        root.start()
+
+    def toggle_option(self, options_menu):
+        """
+        Toggle an option in the options menu.
+        """
+        selected_option = options_menu.get_selected_item_index()
+        options_menu.toggle_item_checked(selected_option)
+
+    def select_format(self, format_menu):
+        """
+        Select an output format.
+        """
+        # This is handled automatically by the scroll menu
+
+    def start_scan_thread(self, button):
+        """
+        Start a scan in a separate thread.
+        """
+        if self.scan_running:
+            self.message_queue.put(('status', 'A scan is already running.'))
+            return
+        
+        # Get scan parameters from UI
+        target = self.widgets['target_input'].get()
+        ports_text = self.widgets['ports_input'].get()
+        options = self.widgets['options_menu'].get_checked_item_list()
+        format_idx = self.widgets['format_menu'].get_selected_item_index()
+        formats = ['json', 'csv', 'html', 'all']
+        
+        # Validate inputs
+        if not target:
+            self.message_queue.put(('status', 'Error: Target is required.'))
+            return
+        
+        try:
+            ports = self.validate_ports(ports_text)
+        except Exception as e:
+            self.message_queue.put(('status', f'Error: Invalid port specification: {e}'))
+            return
+        
+        # Update button text
+        button.set_title('Scanning...')
+        self.scan_running = True
+        
+        # Clear previous results
+        self.results_window.set_text('Starting scan...')
+        self.details_window.set_text('')
+        
+        # Start scan thread
+        scan_thread = threading.Thread(
+            target=self.run_scan_in_thread,
+            args=(target, ports, options, formats[format_idx])
+        )
+        scan_thread.daemon = True
+        scan_thread.start()
+
+    def run_scan_in_thread(self, target, ports, options, output_format):
+        """
+        Run a scan in a separate thread and update the UI via the message queue.
+        """
+        try:
+            self.message_queue.put(('status', f'Scanning {target} for {len(ports)} ports...'))
+            
+            # Set scan parameters
+            self.target = target
+            self.ports = ports
+            self.timeout = 1.0
+            self.threads = 100
+            self.verbose = 'Verbose Output' in options
+            
+            # Expand targets if CIDR notation is used
+            targets = self.expand_targets(self.target)
+            
+            all_results = {}
+            total_start_time = time.time()
+            
+            # Scan each target
+            for i, target in enumerate(targets):
+                self.message_queue.put(('status', f'Scanning target {i+1}/{len(targets)}: {target}'))
+                
+                self.target = target  # Update current target
+                self.logger.info(f"Starting scan of {self.target}")
+                
+                # Scan ports
+                results = asyncio.run(self.scan_ports_interactive())
+                
+                # Check for vulnerabilities if enabled
+                if 'Vulnerability Check' in options:
+                    self.message_queue.put(('status', 'Checking for vulnerabilities...'))
+                    results = self.check_vulnerabilities(results)
+                
+                all_results[target] = results
+                
+                # Update results window
+                self.current_results = all_results
+                self.update_results_display()
+                
+                # Save results if requested
+                if 'Save Results' in options:
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    output_file = f"gatekeeper_scan_{timestamp}_{target.replace('.', '_')}"
+                    self.save_results(results, filename=output_file, encrypt=False, format=output_format)
+                    self.message_queue.put(('status', f'Results saved to {output_file}'))
+            
+            total_duration = time.time() - total_start_time
+            
+            # Display summary if multiple targets were scanned
+            if len(targets) > 1:
+                summary = f"Scan complete. Scanned {len(targets)} targets in {total_duration:.2f} seconds.\n"
+                total_open = sum(len(results) for results in all_results.values())
+                summary += f"Found {total_open} open ports across all targets."
+                self.message_queue.put(('status', summary))
+            else:
+                self.message_queue.put(('status', f'Scan complete in {total_duration:.2f} seconds.'))
+            
+            self.logger.info("Scan complete")
+        
+        except Exception as e:
+            self.logger.error(f"Error during scan: {e}")
+            self.message_queue.put(('status', f'Error during scan: {e}'))
+        
+        finally:
+            self.scan_running = False
+            self.message_queue.put(('button', 'Start Scan'))
+
+    def check_message_queue(self, root):
+        """
+        Check for messages from the scan thread and update the UI.
+        """
+        try:
+            while not self.message_queue.empty():
+                message_type, message = self.message_queue.get_nowait()
+                
+                if message_type == 'status':
+                    root.set_status_bar_text(message)
+                elif message_type == 'button':
+                    self.widgets['scan_button'].set_title(message)
+                elif message_type == 'results':
+                    self.results_window.set_text(message)
+                elif message_type == 'details':
+                    self.details_window.set_text(message)
+        
+        except Exception as e:
+            root.set_status_bar_text(f'Error updating UI: {e}')
+
+    def update_results_display(self):
+        """
+        Update the results display with current scan results.
+        """
+        if not self.current_results:
+            self.message_queue.put(('results', 'No scan results yet.'))
+            return
+        
+        results_text = ""
+        
+        for target, results in self.current_results.items():
+            results_text += f"=== Scan Results for {target} ===\n"
+            
+            if not results:
+                results_text += "No open ports found.\n\n"
+                continue
+            
+            results_text += f"Found {len(results)} open ports:\n\n"
+            results_text += f"{'PORT':<10}{'STATE':<10}{'SERVICE':<15}{'VERSION':<30}\n"
+            results_text += "-" * 65 + "\n"
+            
+            for result in results:
+                port = result.get('port', 'N/A')
+                service = result.get('service', 'Unknown')
+                version = result.get('version', '')
+                
+                results_text += f"{port:<10}{'open':<10}{service:<15}{version:<30}\n"
+            
+            # Add vulnerability summary if available
+            vuln_count = sum(len(result.get('vulnerabilities', [])) for result in results)
+            if vuln_count > 0:
+                results_text += f"\nFound {vuln_count} potential vulnerabilities. Select a port to view details.\n"
+            
+            results_text += "\n"
+        
+        self.message_queue.put(('results', results_text))
+
+    async def scan_ports_interactive(self):
+        """
+        Scan the target for open ports using asyncio for concurrency.
+        Updates the UI with progress information.
+        Returns a list of dictionaries with port and service information.
+        """
+        self.logger.info(f"Starting port scan on {self.target} for ports {self.ports}")
+        
+        open_ports = []
+        semaphore = asyncio.Semaphore(self.threads)
+        
+        # Create tasks for all ports
+        tasks = [self.scan_port(port) for port in self.ports]
+        
+        # Process tasks as they complete
+        total_ports = len(tasks)
+        completed = 0
+        
+        for future in asyncio.as_completed(tasks):
+            result = await future
+            completed += 1
+            
+            # Update progress every 5% or for each open port
+            if result or completed % max(1, total_ports // 20) == 0:
+                progress_pct = (completed / total_ports) * 100
+                status = f"Scanning: {completed}/{total_ports} ports ({progress_pct:.1f}%)"
+                if result:
+                    status += f" | Found open port {result['port']}: {result['service']}"
+                self.message_queue.put(('status', status))
+            
+            if result:  # If port is open
+                open_ports.append(result)
+        
+        self.logger.info(f"Scan complete. Found {len(open_ports)} open ports")
+        return open_ports
+
     def main(self):
         """Main execution flow."""
         try:
             args = self.parse_arguments()
             
+            # Handle interactive mode
+            if args.command == 'interactive':
+                self.start_interactive_mode()
+                return
+            
             # Handle profile commands
-            if args.command == 'profile':
+            elif args.command == 'profile':
                 if args.profile_command == 'list':
                     self.list_config_profiles()
                     return
@@ -990,7 +1283,7 @@ class GateKeeper:
                 if args.profile:
                     profile_args = self.load_config_profile(args.profile)
                     if not profile_args:
-            sys.exit(1)
+                        sys.exit(1)
 
                     # Override profile settings with command line arguments
                     for key, value in vars(args).items():
