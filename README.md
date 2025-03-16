@@ -13,6 +13,7 @@ This tool is intended for authorized use only. Users must ensure they have expli
 - Detailed logging and reporting
 - Service identification for common ports
 - Built-in safety features and scan authorization checks
+- **NEW: Report Comparison Tool** - Compare scan results over time to identify network changes
 
 ## Requirements
 - Python 3.7+
@@ -48,6 +49,33 @@ Options:
 - `--timeout`: Connection timeout in seconds (default: 1)
 - `--rate-limit`: Time between connection attempts in seconds (default: 0.1)
 
+## Report Comparison Tool
+The new report comparison feature allows you to compare two scan reports to identify changes in network configuration over time.
+
+### Using the Comparison Tool
+
+List available reports:
+```bash
+python compare_reports.py --list
+```
+
+Compare two reports:
+```bash
+python compare_reports.py --report1 reports/scan_target1_20230101.json --report2 reports/scan_target1_20230201.json
+```
+
+Specify a custom output file:
+```bash
+python compare_reports.py --report1 reports/scan1.json --report2 reports/scan2.json -o reports/comparison_output.json
+```
+
+### Comparison Features
+- Identifies newly opened ports
+- Identifies closed ports
+- Detects service changes on existing ports
+- Generates detailed comparison reports
+- Provides color-coded output for easy interpretation
+
 ## Output
 Results are saved in the `reports/` directory with the following format (yaml):
 
@@ -57,6 +85,8 @@ Open Ports:
 Port 22: SSH
 Port 80: HTTP
 Port 443: HTTPS
+
+Comparison reports are saved in the `reports/comparisons/` directory.
 
 ## Author
 Joseph Fragomeni

@@ -13,6 +13,7 @@ from cryptography.fernet import Fernet  # for encryption
 import json
 from typing import List, Tuple, Dict, Optional, Any
 from utils.banner import display_banner, display_scan_start, display_scan_complete
+from utils.report_compare import ReportComparer, find_latest_reports
 import asyncio
 from tqdm import tqdm
 from colorama import init, Fore, Style
@@ -281,7 +282,7 @@ class GateKeeper:
         except Exception as e:
             raise ValueError(f"Failed to decrypt results: {e}")
 
-    def save_results(self, results, filename=None, encrypt=False, format='json'):
+    def save_results(self, results, filename=None, encrypt=True, format='json'):
         """
         Save scan results to a file in the specified format.
         Supports JSON, CSV, and HTML formats.
@@ -475,70 +476,78 @@ class GateKeeper:
             print(f"{Fore.RED}Error saving results: {e}{Style.RESET_ALL}")
             return False
 
-    def display_disclaimer(self) -> bool:
+    def compare_reports(self, report1_path: str, report2_path: str, output_path: Optional[str] = None) -> str:
         """
-        Display legal disclaimer and require user acknowledgment.
-        Returns True if user accepts, False if declined.
-        """
-        disclaimer = """
-╔════════════════════ LEGAL DISCLAIMER ════════════════════╗
-║                                                          ║
-║  WARNING: This is a network security testing tool.       ║
-║                                                          ║
-║  By proceeding, you confirm that:                       ║
-║                                                         ║
-║  1. You have EXPLICIT PERMISSION to scan the target     ║
-║     network/system                                      ║
-║                                                         ║
-║  2. You understand that unauthorized scanning may be     ║
-║     ILLEGAL in your jurisdiction                        ║
-║                                                         ║
-║  3. You accept ALL RESPONSIBILITY for the use of this   ║
-║     tool                                                ║
-║                                                         ║
-║  4. You will use this tool in accordance with all       ║
-║     applicable laws and regulations                     ║
-║                                                         ║
-╚══════════════════════════════════════════════════════════╝
-"""
-        print(disclaimer)
+        Compare two scan reports and identify differences.
         
-        # Log the disclaimer display
-        self.logger.info("Legal disclaimer displayed to user")
+        Args:
+            report1_path: Path to first (baseline) report
+            report2_path: Path to second (comparison) report
+            output_path: Path to save comparison results (optional)
+            
+        Returns:
+            str: Path to the generated comparison report
+        """
+        self.logger.info(f"Comparing reports: {report1_path} and {report2_path}")
         
         try:
-            # Ask for explicit confirmation
-            confirmation = input("\nDo you accept these terms? (yes/no): ").lower().strip()
+            from utils.report_compare import ReportComparer
             
-            if confirmation == 'yes':
-                self.logger.info("User accepted legal disclaimer")
-                print("\nDisclaimer accepted. Proceeding with scan...\n")
-                return True
-            else:
-                self.logger.warning("User declined legal disclaimer")
-                print("\nDisclaimer not accepted. Exiting program.")
-                return False
+            # Create a report comparer
+            comparer = ReportComparer(report1_path, report2_path)
             
-        except KeyboardInterrupt:
-            self.logger.warning("User interrupted disclaimer prompt")
-            print("\nOperation cancelled by user.")
-            return False
-
-    def validate_ports(self, ports_str: str) -> List[int]:
-        """Validate port numbers from string input."""
+            # Load the reports
+            if not comparer.load_reports():
+                error_msg = "Failed to load reports"
+                self.logger.error(error_msg)
+                print(f"{Fore.RED}Error: {error_msg}{Style.RESET_ALL}")
+                return None
+            
+            # Print comparison summary
+            comparer.print_comparison_summary()
+            
+            # Generate comparison report
+            output = comparer.generate_comparison_report(output_path)
+            
+            self.logger.info(f"Generated comparison report: {output}")
+            return output
+            
+        except Exception as e:
+            self.logger.error(f"Error comparing reports: {e}")
+            print(f"{Fore.RED}Error comparing reports: {e}{Style.RESET_ALL}")
+            return None
+    
+    def list_available_reports(self, limit: int = 10) -> None:
+        """
+        List available scan reports.
+        
+        Args:
+            limit: Maximum number of reports to list
+        """
         try:
-            ports = []
-            for port in ports_str.split(','):
-                port = int(port.strip())
-                if not 1 <= port <= 65535:
-                    raise ValueError(f"Port {port} is out of valid range (1-65535)")
-                ports.append(port)
-            return ports
-        except ValueError as e:
-            raise ValueError(f"Invalid port specification: {e}")
+            from utils.report_compare import find_latest_reports
+            
+            # Get the latest reports
+            reports = find_latest_reports(limit=limit)
+            
+            if not reports:
+                print(f"{Fore.YELLOW}No reports found in the reports directory.{Style.RESET_ALL}")
+                return
+            
+            print(f"\n{Fore.CYAN}Available scan reports (most recent first):{Style.RESET_ALL}")
+            for i, report in enumerate(reports, 1):
+                report_path = Path(report)
+                mod_time = datetime.fromtimestamp(report_path.stat().st_mtime)
+                print(f"{i}. {report_path.name} - {mod_time.strftime('%Y-%m-%d %H:%M:%S')}")
+            
+            print(f"\nTo compare reports, use: gatekeeper.py --compare --report1 <path1> --report2 <path2>\n")
+            
+        except Exception as e:
+            self.logger.error(f"Error listing reports: {e}")
+            print(f"{Fore.RED}Error listing reports: {e}{Style.RESET_ALL}")
 
     def parse_arguments(self):
-        """Parse command line arguments."""
+        """Parse command-line arguments."""
         parser = argparse.ArgumentParser(
             description="GateKeeper - Network Security Scanner",
             formatter_class=argparse.ArgumentDefaultsHelpFormatter
@@ -580,6 +589,16 @@ class GateKeeper:
         # Interactive mode
         interactive_parser = subparsers.add_parser('interactive', help='Start interactive TUI mode')
         
+        # Add new report comparison command
+        compare_parser = subparsers.add_parser('compare', help='Compare scan reports')
+        compare_parser.add_argument('--report1', required=True, help='Path to first (baseline) report')
+        compare_parser.add_argument('--report2', required=True, help='Path to second (comparison) report')
+        compare_parser.add_argument('-o', '--output', help='Output file for comparison results')
+        
+        # Add report listing command
+        list_reports_parser = subparsers.add_parser('reports', help='List available scan reports')
+        list_reports_parser.add_argument('-n', '--limit', type=int, default=10, help='Maximum number of reports to list')
+        
         # For backward compatibility, if no command is specified, default to 'scan'
         args = parser.parse_args()
         if not args.command:
@@ -589,519 +608,71 @@ class GateKeeper:
         
         return args
 
-    def expand_targets(self, target):
-        """
-        Expand target to a list of IP addresses if it's a CIDR range.
-        Returns a list of target IP addresses.
-        """
-        try:
-            # Check if the target is a CIDR range
-            if '/' in target:
-                network = ipaddress.ip_network(target, strict=False)
-                # Convert to list of strings and limit to a reasonable number
-                ip_list = [str(ip) for ip in network.hosts()]
-                
-                # If the range is large, warn the user
-                if len(ip_list) > 256:
-                    print(f"{Fore.YELLOW}Warning: Large IP range detected ({len(ip_list)} hosts). This may take a while.{Style.RESET_ALL}")
-                    confirm = input("Do you want to continue? (y/n): ").lower()
-                    if confirm != 'y':
-                        self.logger.info("Scan cancelled by user due to large IP range")
-                        sys.exit(0)
-                
-                return ip_list
-            else:
-                # Single target
-                return [target]
-        except ValueError:
-            # Not a valid CIDR, assume it's a hostname
-            self.logger.info(f"Target {target} is not a valid CIDR range, treating as hostname")
-            return [target]
-
-    async def scan_ports(self):
-        """
-        Scan the target for open ports using asyncio for concurrency.
-        Returns a list of dictionaries with port and service information.
-        """
-        self.logger.info(f"Starting port scan on {self.target} for ports {self.ports}")
+    def main(self):
+        """Main execution function."""
+        args = self.parse_arguments()
         
-        start_time = time.time()
-        open_ports = []
-        semaphore = asyncio.Semaphore(self.threads)
-        
-        # Create tasks for all ports
-        tasks = [self.scan_port(port) for port in self.ports]
-        
-        # Set up progress bar
-        with tqdm(total=len(tasks), desc="Scanning ports", unit="port") as progress_bar:
-            # Process tasks as they complete
-            for future in asyncio.as_completed(tasks):
-                result = await future
-                if result:  # If port is open
-                    open_ports.append(result)
-                progress_bar.update(1)
-        
-        scan_duration = time.time() - start_time
-        
-        print(f"\n{Fore.CYAN}Scan completed in {scan_duration:.2f} seconds{Style.RESET_ALL}")
-        self.logger.info(f"Scan complete. Found {len(open_ports)} open ports in {scan_duration:.2f} seconds")
-        return open_ports
-
-    def validate_target(self, target: str) -> str:
-        """Validate target hostname or IP address."""
-        if not target:
-            raise ValueError("Target cannot be empty")
-        
-        # Remove any whitespace and protocol prefixes
-        target = target.strip().lower()
-        target = target.replace('http://', '').replace('https://', '')
-        
-        # Basic validation of hostname format
-        if not all(c.isalnum() or c in '-._' for c in target.split('.')[0]):
-            raise ValueError("Invalid target format")
-            
-        return target
-
-    def display_results(self, results):
-        """Display scan results in a formatted, colorized way."""
-        if not results:
-            print(f"{Fore.YELLOW}No open ports found on {self.target}{Style.RESET_ALL}")
+        # Handle interactive mode
+        if args.command == 'interactive':
+            self.start_interactive_mode()
             return
         
-        print(f"\n{Fore.CYAN}=== Scan Results for {self.target} ==={Style.RESET_ALL}")
-        print(f"{Fore.GREEN}Found {len(results)} open ports:{Style.RESET_ALL}")
+        # Handle profile commands
+        elif args.command == 'profile':
+            if args.profile_command == 'list':
+                self.list_config_profiles()
+                return
+            elif args.profile_command == 'show':
+                self.show_config_profile(args.name)
+                return
+            elif args.profile_command == 'delete':
+                self.delete_config_profile(args.name)
+                return
         
-        # Create a formatted table
-        print(f"\n{Fore.CYAN}{'PORT':<10}{'STATE':<10}{'SERVICE':<15}{'VERSION':<30}{Style.RESET_ALL}")
-        print("-" * 65)
-        
-        for result in results:
-            port = result.get('port', 'N/A')
-            service = result.get('service', 'Unknown')
-            version = result.get('version', '')
-            
-            print(f"{Fore.GREEN}{port:<10}{'open':<10}{Style.RESET_ALL}{service:<15}{version:<30}")
-        
-        print(f"\n{Fore.CYAN}Scan completed at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}{Style.RESET_ALL}")
-
-    def load_vulnerability_database(self):
-        """
-        Load vulnerability database from a local file or download from a remote source.
-        Returns a dictionary of vulnerabilities indexed by service and version.
-        """
-        try:
-            # First try to load from local file
-            db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vuln_db.json")
-            
-            # Check if the database exists and is less than 7 days old
-            update_db = True
-            if os.path.exists(db_path):
-                file_age = datetime.now().timestamp() - os.path.getmtime(db_path)
-                if file_age < 7 * 24 * 60 * 60:  # 7 days in seconds
-                    update_db = False
-            
-            if update_db:
-                print(f"{Fore.CYAN}Updating vulnerability database...{Style.RESET_ALL}")
-                # In a real implementation, you would download from a real vulnerability database
-                # For this example, we'll create a simple database with some common vulnerabilities
-                vuln_db = {
-                    "HTTP": {
-                        "Apache": [
-                            {"id": "CVE-2021-41773", "severity": "HIGH", "description": "Path traversal vulnerability in Apache HTTP Server 2.4.49"},
-                            {"id": "CVE-2021-42013", "severity": "HIGH", "description": "Path traversal vulnerability in Apache HTTP Server 2.4.50"}
-                        ],
-                        "nginx": [
-                            {"id": "CVE-2021-23017", "severity": "MEDIUM", "description": "Nginx resolver vulnerability"}
-                        ]
-                    },
-                    "SSH": {
-                        "OpenSSH": [
-                            {"id": "CVE-2020-14145", "severity": "LOW", "description": "OpenSSH client information leak"},
-                            {"id": "CVE-2019-6111", "severity": "MEDIUM", "description": "OpenSSH SCP client arbitrary file write vulnerability"}
-                        ]
-                    },
-                    "FTP": {
-                        "vsftpd": [
-                            {"id": "CVE-2011-2523", "severity": "HIGH", "description": "vsftpd 2.3.4 backdoor vulnerability"}
-                        ]
-                    },
-                    "SMTP": {
-                        "Exim": [
-                            {"id": "CVE-2019-15846", "severity": "CRITICAL", "description": "Exim remote command execution vulnerability"}
-                        ]
-                    },
-                    "MySQL": {
-                        "MySQL": [
-                            {"id": "CVE-2021-2307", "severity": "HIGH", "description": "MySQL Server privilege escalation vulnerability"}
-                        ]
-                    }
-                }
-                
-                # Save the database to a local file
-                with open(db_path, 'w') as f:
-                    json.dump(vuln_db, f, indent=2)
-                
-                print(f"{Fore.GREEN}Vulnerability database updated successfully{Style.RESET_ALL}")
-            else:
-                # Load from local file
-                with open(db_path, 'r') as f:
-                    vuln_db = json.load(f)
-                
-                if self.verbose:
-                    print(f"{Fore.CYAN}Using cached vulnerability database{Style.RESET_ALL}")
-            
-            return vuln_db
-        
-        except Exception as e:
-            self.logger.error(f"Error loading vulnerability database: {e}")
-            print(f"{Fore.YELLOW}Warning: Could not load vulnerability database. Vulnerability scanning will be limited.{Style.RESET_ALL}")
-            return {}
-
-    def check_vulnerabilities(self, results):
-        """
-        Check for known vulnerabilities based on service and version information.
-        Returns the results with added vulnerability information.
-        """
-        vuln_db = self.load_vulnerability_database()
-        
-        if not vuln_db:
-            return results
-        
-        for result in results:
-            service = result.get('service', 'Unknown')
-            version_full = result.get('version', '')
-            
-            # Initialize vulnerabilities list
-            result['vulnerabilities'] = []
-            
-            # Skip if service is unknown or no version info
-            if service == 'Unknown' or not version_full:
-                continue
-            
-            # Check if the service exists in the vulnerability database
-            if service in vuln_db:
-                # Extract the software name from the version string
-                # This is a simplified approach - in reality, you'd need more sophisticated parsing
-                version_parts = version_full.split()
-                software_candidates = []
-                
-                # Try to identify the software name
-                for part in version_parts:
-                    if part.lower() in [s.lower() for s in vuln_db[service].keys()]:
-                        software_candidates.append(part)
-                
-                # If we couldn't identify the software, try common names
-                if not software_candidates and service == "HTTP":
-                    if "apache" in version_full.lower():
-                        software_candidates.append("Apache")
-                    elif "nginx" in version_full.lower():
-                        software_candidates.append("nginx")
-                
-                # Check vulnerabilities for each potential software match
-                for software in software_candidates:
-                    for sw_name in vuln_db[service].keys():
-                        if software.lower() == sw_name.lower():
-                            # Add all vulnerabilities for this software
-                            for vuln in vuln_db[service][sw_name]:
-                                result['vulnerabilities'].append(vuln)
-        
-        return results
-
-    def save_config_profile(self, profile_name, args):
-        """
-        Save the current scan configuration as a profile.
-        """
-        try:
-            # Create config directory if it doesn't exist
-            config_dir = Path.home() / '.gatekeeper' / 'profiles'
-            config_dir.mkdir(parents=True, exist_ok=True)
-            
-            # Create the configuration dictionary
-            config = {
-                'target': args.target,
-                'ports': args.ports,
-                'timeout': args.timeout,
-                'threads': args.threads,
-                'format': args.format,
-                'no_vuln_check': args.no_vuln_check,
-                'verbose': args.verbose,
-                'created_at': datetime.now().isoformat(),
-                'description': args.description if hasattr(args, 'description') else ''
-            }
-            
-            # Save the configuration to a YAML file
-            config_file = config_dir / f"{profile_name}.yaml"
-            with open(config_file, 'w') as f:
-                yaml.dump(config, f, default_flow_style=False)
-            
-            print(f"{Fore.GREEN}Configuration profile '{profile_name}' saved successfully{Style.RESET_ALL}")
-            self.logger.info(f"Configuration profile '{profile_name}' saved to {config_file}")
-            return True
-        
-        except Exception as e:
-            print(f"{Fore.RED}Error saving configuration profile: {e}{Style.RESET_ALL}")
-            self.logger.error(f"Error saving configuration profile: {e}")
-            return False
-
-    def load_config_profile(self, profile_name):
-        """
-        Load a saved scan configuration profile.
-        Returns a namespace object similar to what argparse would return.
-        """
-        try:
-            # Find the profile file
-            config_dir = Path.home() / '.gatekeeper' / 'profiles'
-            config_file = config_dir / f"{profile_name}.yaml"
-            
-            if not config_file.exists():
-                print(f"{Fore.RED}Profile '{profile_name}' not found{Style.RESET_ALL}")
-                self.logger.error(f"Profile '{profile_name}' not found at {config_file}")
-                return None
-            
-            # Load the configuration from the YAML file
-            with open(config_file, 'r') as f:
-                config = yaml.safe_load(f)
-            
-            # Convert to a namespace object
-            args = argparse.Namespace()
-            for key, value in config.items():
-                setattr(args, key, value)
-            
-            print(f"{Fore.GREEN}Loaded configuration profile '{profile_name}'{Style.RESET_ALL}")
-            if hasattr(args, 'description') and args.description:
-                print(f"{Fore.CYAN}Description: {args.description}{Style.RESET_ALL}")
-            
-            self.logger.info(f"Loaded configuration profile '{profile_name}' from {config_file}")
-            return args
-        
-        except Exception as e:
-            print(f"{Fore.RED}Error loading configuration profile: {e}{Style.RESET_ALL}")
-            self.logger.error(f"Error loading configuration profile: {e}")
-            return None
-
-    def list_config_profiles(self):
-        """
-        List all available configuration profiles.
-        """
-        try:
-            # Find all profile files
-            config_dir = Path.home() / '.gatekeeper' / 'profiles'
-            
-            if not config_dir.exists():
-                print(f"{Fore.YELLOW}No configuration profiles found{Style.RESET_ALL}")
-                return []
-            
-            profiles = list(config_dir.glob('*.yaml'))
-            
-            if not profiles:
-                print(f"{Fore.YELLOW}No configuration profiles found{Style.RESET_ALL}")
-                return []
-            
-            print(f"{Fore.CYAN}Available configuration profiles:{Style.RESET_ALL}")
-            
-            profile_info = []
-            for profile_path in profiles:
-                profile_name = profile_path.stem
-                
-                # Load the profile to get additional info
-                try:
-                    with open(profile_path, 'r') as f:
-                        config = yaml.safe_load(f)
-                    
-                    created_at = config.get('created_at', 'Unknown')
-                    if isinstance(created_at, str):
-                        try:
-                            created_at = datetime.fromisoformat(created_at).strftime('%Y-%m-%d %H:%M')
-                        except:
-                            pass
-                    
-                    target = config.get('target', 'Unknown')
-                    description = config.get('description', '')
-                    
-                    profile_info.append({
-                        'name': profile_name,
-                        'target': target,
-                        'created_at': created_at,
-                        'description': description
-                    })
-                    
-                    print(f"  {Fore.GREEN}{profile_name}{Style.RESET_ALL}")
-                    print(f"    Target: {target}")
-                    print(f"    Created: {created_at}")
-                    if description:
-                        print(f"    Description: {description}")
-                    print()
-                
-        except Exception as e:
-                    print(f"  {Fore.YELLOW}{profile_name} (Error: {e}){Style.RESET_ALL}")
-                    profile_info.append({'name': profile_name, 'error': str(e)})
-            
-            return profile_info
-        
-        except Exception as e:
-            print(f"{Fore.RED}Error listing configuration profiles: {e}{Style.RESET_ALL}")
-            self.logger.error(f"Error listing configuration profiles: {e}")
-            return []
-
-    def delete_config_profile(self, profile_name):
-        """
-        Delete a saved configuration profile.
-        """
-        try:
-            # Find the profile file
-            config_dir = Path.home() / '.gatekeeper' / 'profiles'
-            config_file = config_dir / f"{profile_name}.yaml"
-            
-            if not config_file.exists():
-                print(f"{Fore.RED}Profile '{profile_name}' not found{Style.RESET_ALL}")
-                return False
-            
-            # Delete the file
-            config_file.unlink()
-            
-            print(f"{Fore.GREEN}Deleted configuration profile '{profile_name}'{Style.RESET_ALL}")
-            self.logger.info(f"Deleted configuration profile '{profile_name}'")
-            return True
-        
-        except Exception as e:
-            print(f"{Fore.RED}Error deleting configuration profile: {e}{Style.RESET_ALL}")
-            self.logger.error(f"Error deleting configuration profile: {e}")
-            return False
-
-    def start_interactive_mode(self):
-        """
-        Start the interactive terminal user interface.
-        """
-        # Initialize the CUI with 8 rows and 6 columns
-        root = py_cui.PyCUI(8, 6)
-        root.set_title('GateKeeper - Network Security Scanner')
-        
-        # Set color scheme
-        root.set_status_bar_text('GateKeeper Interactive Mode | Press q to exit')
-        
-        # Create a queue for communication between scan thread and UI
-        self.message_queue = queue.Queue()
-        self.scan_running = False
-        self.current_results = {}
-        
-        # Create widgets
-        # Target input
-        target_input = root.add_text_box('Target', 0, 0, 2, 3)
-        target_input.set_text(self.target if hasattr(self, 'target') else '')
-        
-        # Ports input
-        ports_input = root.add_text_box('Ports', 0, 3, 2, 3)
-        ports_input.set_text(','.join(map(str, self.ports)) if hasattr(self, 'ports') else '1-1000')
-        
-        # Options menu
-        options_menu = root.add_checkbox_menu('Options', 2, 0, 2, 2)
-        options_menu.add_item_list(['Vulnerability Check', 'Verbose Output', 'Save Results'])
-        options_menu.add_key_command(py_cui.keys.KEY_ENTER, self.toggle_option)
-        
-        # Output format menu
-        format_menu = root.add_scroll_menu('Output Format', 2, 2, 2, 2)
-        format_menu.add_item_list(['JSON', 'CSV', 'HTML', 'All'])
-        format_menu.add_key_command(py_cui.keys.KEY_ENTER, self.select_format)
-        
-        # Scan button
-        scan_button = root.add_button('Start Scan', 2, 4, 2, 2)
-        scan_button.command = self.start_scan_thread
-        
-        # Results window
-        self.results_window = root.add_text_block('Scan Results', 4, 0, 4, 4)
-        self.results_window.set_text('No scan results yet. Configure scan parameters and press "Start Scan".')
-        
-        # Details window
-        self.details_window = root.add_text_block('Details', 4, 4, 4, 2)
-        self.details_window.set_text('Select a result to view details.')
-        
-        # Store widgets for access in other methods
-        self.widgets = {
-            'target_input': target_input,
-            'ports_input': ports_input,
-            'options_menu': options_menu,
-            'format_menu': format_menu,
-            'scan_button': scan_button,
-            'results_window': self.results_window,
-            'details_window': self.details_window
-        }
-        
-        # Set up a callback to check the message queue
-        root.set_refresh_timeout(0.1)
-        root.set_on_draw_update_func(self.check_message_queue)
-        
-        # Start the CUI
-        root.start()
-
-    def toggle_option(self, options_menu):
-        """
-        Toggle an option in the options menu.
-        """
-        selected_option = options_menu.get_selected_item_index()
-        options_menu.toggle_item_checked(selected_option)
-
-    def select_format(self, format_menu):
-        """
-        Select an output format.
-        """
-        # This is handled automatically by the scroll menu
-
-    def start_scan_thread(self, button):
-        """
-        Start a scan in a separate thread.
-        """
-        if self.scan_running:
-            self.message_queue.put(('status', 'A scan is already running.'))
+        # Handle report comparison
+        elif args.command == 'compare':
+            self.compare_reports(args.report1, args.report2, args.output)
             return
         
-        # Get scan parameters from UI
-        target = self.widgets['target_input'].get()
-        ports_text = self.widgets['ports_input'].get()
-        options = self.widgets['options_menu'].get_checked_item_list()
-        format_idx = self.widgets['format_menu'].get_selected_item_index()
-        formats = ['json', 'csv', 'html', 'all']
-        
-        # Validate inputs
-        if not target:
-            self.message_queue.put(('status', 'Error: Target is required.'))
+        # Handle report listing
+        elif args.command == 'reports':
+            self.list_available_reports(args.limit)
             return
         
-        try:
-            ports = self.validate_ports(ports_text)
-        except Exception as e:
-            self.message_queue.put(('status', f'Error: Invalid port specification: {e}'))
-            return
-        
-        # Update button text
-        button.set_title('Scanning...')
-        self.scan_running = True
-        
-        # Clear previous results
-        self.results_window.set_text('Starting scan...')
-        self.details_window.set_text('')
-        
-        # Start scan thread
-        scan_thread = threading.Thread(
-            target=self.run_scan_in_thread,
-            args=(target, ports, options, formats[format_idx])
-        )
-        scan_thread.daemon = True
-        scan_thread.start()
+        # Handle scan command (default)
+        elif args.command == 'scan':
+            # Load profile if specified
+            if args.profile:
+                profile_args = self.load_config_profile(args.profile)
+                if not profile_args:
+                    sys.exit(1)
 
-    def run_scan_in_thread(self, target, ports, options, output_format):
-        """
-        Run a scan in a separate thread and update the UI via the message queue.
-        """
-        try:
-            self.message_queue.put(('status', f'Scanning {target} for {len(ports)} ports...'))
+                # Override profile settings with command line arguments
+                for key, value in vars(args).items():
+                    if key not in ['command', 'profile'] and value is not None:
+                        setattr(profile_args, key, value)
+                
+                args = profile_args
             
-            # Set scan parameters
-            self.target = target
-            self.ports = ports
-            self.timeout = 1.0
-            self.threads = 100
-            self.verbose = 'Verbose Output' in options
+            # Check if target is specified
+            if not args.target:
+                print(f"{Fore.RED}Error: Target is required{Style.RESET_ALL}")
+                sys.exit(1)
             
+            self.target = args.target
+            self.ports = self.validate_ports(args.ports)
+            self.timeout = args.timeout
+            self.threads = args.threads
+            self.verbose = args.verbose
+
+            # Display disclaimer and get user acceptance
+            if not self.display_disclaimer():
+                sys.exit(0)
+            
+            # Save profile if requested
+            if args.save_profile:
+                self.save_config_profile(args.save_profile, args)
+
             # Expand targets if CIDR notation is used
             targets = self.expand_targets(self.target)
             
@@ -1110,268 +681,39 @@ class GateKeeper:
             
             # Scan each target
             for i, target in enumerate(targets):
-                self.message_queue.put(('status', f'Scanning target {i+1}/{len(targets)}: {target}'))
+                if len(targets) > 1:
+                    print(f"\n{Fore.CYAN}Scanning target {i+1}/{len(targets)}: {target}{Style.RESET_ALL}")
                 
                 self.target = target  # Update current target
                 self.logger.info(f"Starting scan of {self.target}")
                 
                 # Scan ports
-                results = asyncio.run(self.scan_ports_interactive())
+                results = asyncio.run(self.scan_ports())
                 
-                # Check for vulnerabilities if enabled
-                if 'Vulnerability Check' in options:
-                    self.message_queue.put(('status', 'Checking for vulnerabilities...'))
+                # Check for vulnerabilities if not disabled
+                if not args.no_vuln_check:
+                    print(f"\n{Fore.CYAN}Checking for vulnerabilities...{Style.RESET_ALL}")
                     results = self.check_vulnerabilities(results)
                 
                 all_results[target] = results
                 
-                # Update results window
-                self.current_results = all_results
-                self.update_results_display()
+                # Display results for this target
+                self.display_results(results)
                 
-                # Save results if requested
-                if 'Save Results' in options:
-                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    output_file = f"gatekeeper_scan_{timestamp}_{target.replace('.', '_')}"
-                    self.save_results(results, filename=output_file, encrypt=False, format=output_format)
-                    self.message_queue.put(('status', f'Results saved to {output_file}'))
+                # Save results for this target
+                if args.output:
+                    output_file = f"{args.output}_{target.replace('.', '_')}" if len(targets) > 1 else args.output
+                    self.save_results(results, filename=output_file, encrypt=False, format=args.format)
             
             total_duration = time.time() - total_start_time
             
             # Display summary if multiple targets were scanned
             if len(targets) > 1:
-                summary = f"Scan complete. Scanned {len(targets)} targets in {total_duration:.2f} seconds.\n"
+                print(f"\n{Fore.CYAN}=== Scan Summary ==={Style.RESET_ALL}")
+                print(f"Scanned {len(targets)} targets in {total_duration:.2f} seconds")
+                
                 total_open = sum(len(results) for results in all_results.values())
-                summary += f"Found {total_open} open ports across all targets."
-                self.message_queue.put(('status', summary))
-            else:
-                self.message_queue.put(('status', f'Scan complete in {total_duration:.2f} seconds.'))
+                print(f"{Fore.GREEN}Found {total_open} open ports across all targets{Style.RESET_ALL}")
             
             self.logger.info("Scan complete")
-        
-        except Exception as e:
-            self.logger.error(f"Error during scan: {e}")
-            self.message_queue.put(('status', f'Error during scan: {e}'))
-        
-        finally:
-            self.scan_running = False
-            self.message_queue.put(('button', 'Start Scan'))
-
-    def check_message_queue(self, root):
-        """
-        Check for messages from the scan thread and update the UI.
-        """
-        try:
-            while not self.message_queue.empty():
-                message_type, message = self.message_queue.get_nowait()
-                
-                if message_type == 'status':
-                    root.set_status_bar_text(message)
-                elif message_type == 'button':
-                    self.widgets['scan_button'].set_title(message)
-                elif message_type == 'results':
-                    self.results_window.set_text(message)
-                elif message_type == 'details':
-                    self.details_window.set_text(message)
-        
-        except Exception as e:
-            root.set_status_bar_text(f'Error updating UI: {e}')
-
-    def update_results_display(self):
-        """
-        Update the results display with current scan results.
-        """
-        if not self.current_results:
-            self.message_queue.put(('results', 'No scan results yet.'))
             return
-        
-        results_text = ""
-        
-        for target, results in self.current_results.items():
-            results_text += f"=== Scan Results for {target} ===\n"
-            
-            if not results:
-                results_text += "No open ports found.\n\n"
-                continue
-            
-            results_text += f"Found {len(results)} open ports:\n\n"
-            results_text += f"{'PORT':<10}{'STATE':<10}{'SERVICE':<15}{'VERSION':<30}\n"
-            results_text += "-" * 65 + "\n"
-            
-            for result in results:
-                port = result.get('port', 'N/A')
-                service = result.get('service', 'Unknown')
-                version = result.get('version', '')
-                
-                results_text += f"{port:<10}{'open':<10}{service:<15}{version:<30}\n"
-            
-            # Add vulnerability summary if available
-            vuln_count = sum(len(result.get('vulnerabilities', [])) for result in results)
-            if vuln_count > 0:
-                results_text += f"\nFound {vuln_count} potential vulnerabilities. Select a port to view details.\n"
-            
-            results_text += "\n"
-        
-        self.message_queue.put(('results', results_text))
-
-    async def scan_ports_interactive(self):
-        """
-        Scan the target for open ports using asyncio for concurrency.
-        Updates the UI with progress information.
-        Returns a list of dictionaries with port and service information.
-        """
-        self.logger.info(f"Starting port scan on {self.target} for ports {self.ports}")
-        
-        open_ports = []
-        semaphore = asyncio.Semaphore(self.threads)
-        
-        # Create tasks for all ports
-        tasks = [self.scan_port(port) for port in self.ports]
-        
-        # Process tasks as they complete
-        total_ports = len(tasks)
-        completed = 0
-        
-        for future in asyncio.as_completed(tasks):
-            result = await future
-            completed += 1
-            
-            # Update progress every 5% or for each open port
-            if result or completed % max(1, total_ports // 20) == 0:
-                progress_pct = (completed / total_ports) * 100
-                status = f"Scanning: {completed}/{total_ports} ports ({progress_pct:.1f}%)"
-                if result:
-                    status += f" | Found open port {result['port']}: {result['service']}"
-                self.message_queue.put(('status', status))
-            
-            if result:  # If port is open
-                open_ports.append(result)
-        
-        self.logger.info(f"Scan complete. Found {len(open_ports)} open ports")
-        return open_ports
-
-    def main(self):
-        """Main execution flow."""
-        try:
-            args = self.parse_arguments()
-            
-            # Handle interactive mode
-            if args.command == 'interactive':
-                self.start_interactive_mode()
-                return
-            
-            # Handle profile commands
-            elif args.command == 'profile':
-                if args.profile_command == 'list':
-                    self.list_config_profiles()
-                    return
-                elif args.profile_command == 'show':
-                    profile = self.load_config_profile(args.name)
-                    if profile:
-                        print(f"\n{Fore.CYAN}Profile details:{Style.RESET_ALL}")
-                        for key, value in vars(profile).items():
-                            if key != 'description':  # Already displayed
-                                print(f"  {key}: {value}")
-                    return
-                elif args.profile_command == 'delete':
-                    self.delete_config_profile(args.name)
-                    return
-            
-            # Handle scan command
-            elif args.command == 'scan':
-                # Load profile if specified
-                if args.profile:
-                    profile_args = self.load_config_profile(args.profile)
-                    if not profile_args:
-                        sys.exit(1)
-
-                    # Override profile settings with command line arguments
-                    for key, value in vars(args).items():
-                        if key not in ['command', 'profile'] and value is not None:
-                            setattr(profile_args, key, value)
-                    
-                    args = profile_args
-                
-                # Check if target is specified
-                if not args.target:
-                    print(f"{Fore.RED}Error: Target is required{Style.RESET_ALL}")
-                    sys.exit(1)
-                
-                self.target = args.target
-                self.ports = self.validate_ports(args.ports)
-                self.timeout = args.timeout
-                self.threads = args.threads
-                self.verbose = args.verbose
-
-                self.display_disclaimer()
-                if input("Do you accept these terms? (yes/no): ").lower().strip() != 'yes':
-                    self.logger.info("Scan cancelled by user")
-                    sys.exit(0)
-                
-                # Save profile if requested
-                if args.save_profile:
-                    self.save_config_profile(args.save_profile, args)
-
-                # Expand targets if CIDR notation is used
-                targets = self.expand_targets(self.target)
-                
-                all_results = {}
-                total_start_time = time.time()
-                
-                # Scan each target
-                for i, target in enumerate(targets):
-                    if len(targets) > 1:
-                        print(f"\n{Fore.CYAN}Scanning target {i+1}/{len(targets)}: {target}{Style.RESET_ALL}")
-                    
-                    self.target = target  # Update current target
-                    self.logger.info(f"Starting scan of {self.target}")
-                    
-                    # Scan ports
-                    results = asyncio.run(self.scan_ports())
-                    
-                    # Check for vulnerabilities if not disabled
-                    if not args.no_vuln_check:
-                        print(f"\n{Fore.CYAN}Checking for vulnerabilities...{Style.RESET_ALL}")
-                        results = self.check_vulnerabilities(results)
-                    
-                    all_results[target] = results
-                    
-                    # Display results for this target
-                    self.display_results(results)
-                    
-                    # Save results for this target
-                    if args.output:
-                        output_file = f"{args.output}_{target.replace('.', '_')}" if len(targets) > 1 else args.output
-                        self.save_results(results, filename=output_file, encrypt=False, format=args.format)
-                
-                total_duration = time.time() - total_start_time
-                
-                # Display summary if multiple targets were scanned
-                if len(targets) > 1:
-                    print(f"\n{Fore.CYAN}=== Scan Summary ==={Style.RESET_ALL}")
-                    print(f"Scanned {len(targets)} targets in {total_duration:.2f} seconds")
-                    
-                    total_open = sum(len(results) for results in all_results.values())
-                    print(f"{Fore.GREEN}Found {total_open} open ports across all targets{Style.RESET_ALL}")
-                
-                self.logger.info("Scan complete")
-
-        except KeyboardInterrupt:
-            print(f"\n{Fore.YELLOW}Scan interrupted by user{Style.RESET_ALL}")
-            self.logger.info("Scan interrupted by user")
-            sys.exit(0)
-        except Exception as e:
-            self.logger.error(f"Error during execution: {e}")
-            print(f"{Fore.RED}Error: {e}{Style.RESET_ALL}")
-            sys.exit(1)
-
-def main():
-    # Display the banner first
-    display_banner()
-    
-    scanner = GateKeeper()
-    
-    scanner.main()
-
-if __name__ == "__main__":
-    main() 

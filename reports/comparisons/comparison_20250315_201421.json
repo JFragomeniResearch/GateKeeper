@@ -1,0 +1,26 @@
+{
+    "metadata": {
+        "baseline_report": "reports\\sample_scan_20230101.json",
+        "comparison_report": "reports\\sample_scan_20230201.json",
+        "baseline_date": "2023-01-01 12:00:00",
+        "comparison_date": "2023-02-01 12:00:00",
+        "target": "example.com",
+        "comparison_target": "example.com",
+        "comparison_time": "2025-03-15 20:14:21"
+    },
+    "changes": {
+        "new_ports": [
+            8080
+        ],
+        "closed_ports": [
+            3306
+        ],
+        "service_changes": {},
+        "total_changes": 2
+    },
+    "statistics": {
+        "baseline_ports_count": 4,
+        "current_ports_count": 4,
+        "unchanged_ports_count": 3
+    }
+}

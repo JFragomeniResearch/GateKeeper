@@ -1,0 +1,24 @@
+{
+    "target": "example.com",
+    "scan_date": "2023-02-01 12:00:00",
+    "open_ports": {
+        "22": {
+            "service": "SSH",
+            "banner": "OpenSSH 8.0"
+        },
+        "80": {
+            "service": "HTTP",
+            "banner": "Nginx/1.18.0"
+        },
+        "443": {
+            "service": "HTTPS",
+            "banner": "Nginx/1.18.0"
+        },
+        "8080": {
+            "service": "HTTP-Alt",
+            "banner": "Apache Tomcat/9.0.41"
+        }
+    },
+    "scan_duration": 2.42,
+    "scan_timestamp": 1675252800
+} 

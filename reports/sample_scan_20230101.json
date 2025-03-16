@@ -1,0 +1,24 @@
+{
+    "target": "example.com",
+    "scan_date": "2023-01-01 12:00:00",
+    "open_ports": {
+        "22": {
+            "service": "SSH",
+            "banner": "OpenSSH 7.9"
+        },
+        "80": {
+            "service": "HTTP",
+            "banner": "Apache/2.4.41"
+        },
+        "443": {
+            "service": "HTTPS",
+            "banner": "Apache/2.4.41"
+        },
+        "3306": {
+            "service": "MySQL",
+            "banner": "MySQL 5.7.32"
+        }
+    },
+    "scan_duration": 2.35,
+    "scan_timestamp": 1672574400
+} 
