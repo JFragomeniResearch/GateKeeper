@@ -13,7 +13,9 @@ This tool is intended for authorized use only. Users must ensure they have expli
 - Detailed logging and reporting
 - Service identification for common ports
 - Built-in safety features and scan authorization checks
-- **NEW: Report Comparison Tool** - Compare scan results over time to identify network changes
+- Report Comparison Tool - Compare scan results over time to identify network changes
+- **NEW: Port Behavior Analysis** - Detect anomalous port behavior patterns across multiple scans
+- **NEW: Scan Policy Templates** - Create, manage, and apply reusable scan configurations
 
 ## Requirements
 - Python 3.7+
@@ -21,7 +23,11 @@ This tool is intended for authorized use only. Users must ensure they have expli
   - socket (built-in)
   - argparse (built-in)
   - concurrent.futures (built-in)
-  - colorama (optional, for colored output)
+  - numpy (for statistical analysis)
+  - colorama (for colored output)
+  - dnspython
+  - cryptography
+  - pyyaml (for policy import/export)
 
 ## Installation
 
@@ -33,62 +39,133 @@ git clone https://github.com/yourusername/gatekeeper.git
 
 cd gatekeeper
 
-3. Install optional dependencies
+3. Install dependencies
 
-pip install colorama
+pip install -r requirements.txt
 
 ## Usage
 Basic usage (bash):
 
-python gatekeeper.py -t example.com -p 1-1024
+python gatekeeper.py scan -t example.com -p 1-1024
 
 Options:
 - `-t, --target`: Target hostname or IP address
 - `-p, --ports`: Port range to scan (e.g., "80" or "1-1024")
-- `-th, --threads`: Number of concurrent threads (default: 100)
+- `--threads`: Number of concurrent threads (default: 100)
 - `--timeout`: Connection timeout in seconds (default: 1)
 - `--rate-limit`: Time between connection attempts in seconds (default: 0.1)
+- `--policy`: Name of scan policy to use
+- `--list-policies`: List available scan policies
+
+## Scan Policy Templates
+The scan policy templates feature allows you to define, save, and reuse scanning configurations for different security scenarios.
+
+### Using Scan Policies
+
+List available policies:
+```bash
+python gatekeeper.py policies --list-policies
+```
+
+or
+
+```bash
+python manage_policies.py list
+```
+
+Show policy details:
+```bash
+python manage_policies.py show quick
+```
+
+Create a new policy:
+```bash
+python manage_policies.py create web_server --name "Web Server Scan" --description "Scan for common web server ports" --ports "80,443,8080-8090" --threads 50
+```
+
+Clone and modify an existing policy:
+```bash
+python manage_policies.py clone quick custom_quick --name "My Quick Scan" --ports "20-25,80,443"
+```
+
+Apply a policy when scanning:
+```bash
+python gatekeeper.py scan -t example.com --policy quick
+```
+
+Export a policy:
+```bash
+python manage_policies.py export web_server web_server_policy.json
+```
+
+Import a policy:
+```bash
+python manage_policies.py import web_server_policy.json
+```
+
+### Built-in Scan Policies
+
+- **Quick Scan**: Fast scan of common ports (21-23,25,53,80,443,3306,3389,8080)
+- **Default Scan**: Balanced scan for general security assessments (ports 1-1024)
+- **Full Scan**: Comprehensive scan of all ports (1-65535)
+- **Stealth Scan**: Low-profile scan to avoid detection
+- **Service Detection**: Focused on service and version detection
 
 ## Report Comparison Tool
-The new report comparison feature allows you to compare two scan reports to identify changes in network configuration over time.
+The report comparison feature allows you to compare two scan reports to identify changes in network configuration over time.
 
 ### Using the Comparison Tool
 
 List available reports:
 ```bash
-python compare_reports.py --list
+python gatekeeper.py reports
 ```
 
 Compare two reports:
 ```bash
-python compare_reports.py --report1 reports/scan_target1_20230101.json --report2 reports/scan_target1_20230201.json
+python gatekeeper.py compare --report1 reports/scan_target1_20230101.json --report2 reports/scan_target1_20230201.json
 ```
 
-Specify a custom output file:
+## Port Behavior Analysis
+The new port behavior analysis feature allows you to analyze port behavior patterns across multiple scan reports to detect anomalies and potential security risks.
+
+### Using the Port Behavior Analysis Tool
+
+Analyze port behavior for all targets:
 ```bash
-python compare_reports.py --report1 reports/scan1.json --report2 reports/scan2.json -o reports/comparison_output.json
+python gatekeeper.py behavior
 ```
 
-### Comparison Features
-- Identifies newly opened ports
-- Identifies closed ports
-- Detects service changes on existing ports
-- Generates detailed comparison reports
-- Provides color-coded output for easy interpretation
+Analyze port behavior for a specific target:
+```bash
+python gatekeeper.py behavior -t example.com
+```
+
+Use the standalone analysis tool:
+```bash
+python analyze_port_behavior.py -t example.com
+```
+
+List available scan reports:
+```bash
+python analyze_port_behavior.py --list
+```
+
+### Behavior Analysis Features
+
+- **Service Changes** - Detect when services running on ports change over time
+- **Intermittent Availability** - Identify ports that are only intermittently available
+- **Response Time Anomalies** - Detect unusual response time patterns
+- **Recently Opened Ports** - Flag ports that were recently opened
+- **Severity Classification** - Anomalies are classified by severity (high, medium, low)
+- **Detailed Reports** - Generate comprehensive JSON reports with all detected anomalies
 
 ## Output
-Results are saved in the `reports/` directory with the following format (yaml):
-
-Target: example.com (192.168.1.1)
-Scan Date: YYYY-MM-DD HH:MM
-Open Ports:
-Port 22: SSH
-Port 80: HTTP
-Port 443: HTTPS
-
+Scan results are saved in the `reports/` directory.
 Comparison reports are saved in the `reports/comparisons/` directory.
+Behavior analysis reports are saved in the `reports/behavior/` directory.
 
 ## Author
 Joseph Fragomeni
 
-Application created using Cursor.ai IDE for applied/educational purposes.
+Application created for applied/educational purposes.

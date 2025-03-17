@@ -14,6 +14,8 @@ import json
 from typing import List, Tuple, Dict, Optional, Any
 from utils.banner import display_banner, display_scan_start, display_scan_complete
 from utils.report_compare import ReportComparer, find_latest_reports
+from utils.port_behavior import PortBehaviorAnalyzer
+from utils.scan_policy import get_policy_manager
 import asyncio
 from tqdm import tqdm
 from colorama import init, Fore, Style
@@ -589,7 +591,7 @@ class GateKeeper:
         # Interactive mode
         interactive_parser = subparsers.add_parser('interactive', help='Start interactive TUI mode')
         
-        # Add new report comparison command
+        # Add report comparison command
         compare_parser = subparsers.add_parser('compare', help='Compare scan reports')
         compare_parser.add_argument('--report1', required=True, help='Path to first (baseline) report')
         compare_parser.add_argument('--report2', required=True, help='Path to second (comparison) report')
@@ -599,6 +601,16 @@ class GateKeeper:
         list_reports_parser = subparsers.add_parser('reports', help='List available scan reports')
         list_reports_parser.add_argument('-n', '--limit', type=int, default=10, help='Maximum number of reports to list')
         
+        # Add port behavior analysis command
+        behavior_parser = subparsers.add_parser('behavior', help='Analyze port behavior over time')
+        behavior_parser.add_argument('-t', '--target', help='Target host to analyze (analyze all targets if not specified)')
+        behavior_parser.add_argument('-n', '--max-reports', type=int, default=10, help='Maximum number of reports to analyze')
+        behavior_parser.add_argument('-o', '--output', help='Output file for analysis results')
+        
+        # Add scan policy commands
+        policy_parser = subparsers.add_parser('policies', help='Manage scan policies')
+        policy_parser.add_argument('--list-policies', action='store_true', help='List available scan policies')
+        
         # For backward compatibility, if no command is specified, default to 'scan'
         args = parser.parse_args()
         if not args.command:
@@ -607,6 +619,59 @@ class GateKeeper:
             args = parser.parse_args(['scan'] + sys.argv[1:])
         
         return args
+
+    def analyze_port_behavior(self, target: Optional[str] = None, max_reports: int = 10, output_path: Optional[str] = None) -> str:
+        """
+        Analyze port behavior over time to detect anomalies.
+        
+        Args:
+            target: Target host to analyze (None means all targets)
+            max_reports: Maximum number of reports to analyze
+            output_path: Path to save the analysis report
+            
+        Returns:
+            str: Path to the generated analysis report
+        """
+        try:
+            from utils.port_behavior import PortBehaviorAnalyzer
+            
+            print(f"{Fore.CYAN}Initializing port behavior analysis...{Style.RESET_ALL}")
+            
+            # Initialize analyzer
+            analyzer = PortBehaviorAnalyzer(
+                target=target,
+                report_dir="reports",
+                max_reports=max_reports
+            )
+            
+            # Load reports
+            print(f"{Fore.CYAN}Loading scan reports...{Style.RESET_ALL}")
+            if not analyzer.load_reports():
+                print(f"{Fore.RED}Failed to load reports. Please ensure you have scan reports in the reports directory.{Style.RESET_ALL}")
+                return None
+            
+            # Build port history
+            print(f"{Fore.CYAN}Building port history...{Style.RESET_ALL}")
+            analyzer.build_port_history()
+            
+            # Detect anomalies
+            print(f"{Fore.CYAN}Detecting anomalous behavior...{Style.RESET_ALL}")
+            analyzer.detect_anomalies()
+            
+            # Print analysis summary
+            analyzer.print_analysis_summary()
+            
+            # Generate report
+            output = analyzer.generate_report(output_path)
+            print(f"\n{Fore.GREEN}Analysis report saved to: {output}{Style.RESET_ALL}")
+            
+            self.logger.info(f"Port behavior analysis completed, report saved to {output}")
+            return output
+            
+        except Exception as e:
+            self.logger.error(f"Error analyzing port behavior: {e}")
+            print(f"{Fore.RED}Error analyzing port behavior: {e}{Style.RESET_ALL}")
+            return None
 
     def main(self):
         """Main execution function."""
@@ -637,6 +702,11 @@ class GateKeeper:
         # Handle report listing
         elif args.command == 'reports':
             self.list_available_reports(args.limit)
+            return
+            
+        # Handle port behavior analysis
+        elif args.command == 'behavior':
+            self.analyze_port_behavior(args.target, args.max_reports, args.output)
             return
         
         # Handle scan command (default)
@@ -717,3 +787,14 @@ class GateKeeper:
             
             self.logger.info("Scan complete")
             return
+
+        # Handle scan policy commands
+        elif args.command == 'policies':
+            # New subcommand for managing policies
+            # Use the standalone script for now
+            os.system(f"python manage_policies.py {' '.join(sys.argv[2:])}")
+            return
+
+        # If no valid command was found, print help
+        else:
+            self.parse_arguments().print_help()
