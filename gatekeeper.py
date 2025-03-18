@@ -16,6 +16,7 @@ from utils.banner import display_banner, display_scan_start, display_scan_comple
 from utils.report_compare import ReportComparer, find_latest_reports
 from utils.port_behavior import PortBehaviorAnalyzer
 from utils.scan_policy import get_policy_manager
+from utils.target_groups import get_target_groups
 import asyncio
 from tqdm import tqdm
 from colorama import init, Fore, Style
@@ -611,6 +612,11 @@ class GateKeeper:
         policy_parser = subparsers.add_parser('policies', help='Manage scan policies')
         policy_parser.add_argument('--list-policies', action='store_true', help='List available scan policies')
         
+        # Add groups command
+        groups_parser = subparsers.add_parser("groups", help="Manage target groups")
+        groups_parser.add_argument("--list", action="store_true", help="List available target groups")
+        groups_parser.add_argument("--show", help="Show details of a specific group")
+        
         # For backward compatibility, if no command is specified, default to 'scan'
         args = parser.parse_args()
         if not args.command:
@@ -795,6 +801,140 @@ class GateKeeper:
             os.system(f"python manage_policies.py {' '.join(sys.argv[2:])}")
             return
 
+        # Handle groups command
+        elif args.command == 'groups':
+            self.handle_groups_command(args)
+            return
+
         # If no valid command was found, print help
         else:
             self.parse_arguments().print_help()
+
+    def handle_groups_command(self, args):
+        """Handle the groups command."""
+        groups_manager = get_target_groups()
+        
+        if args.list:
+            groups_manager.print_groups()
+        elif args.show:
+            groups_manager.print_group_details(args.show)
+        else:
+            print(f"{Fore.YELLOW}Use --list to list all groups or --show GROUP_ID to show details of a specific group{Style.RESET_ALL}")
+            print(f"{Fore.YELLOW}For full group management, use the manage_groups.py script{Style.RESET_ALL}")
+
+    def setup_argparse(self):
+        """Set up command-line argument parsing."""
+        parser = argparse.ArgumentParser(
+            description="GateKeeper Network Scanner",
+            epilog="A security tool for scanning networks and detecting changes"
+        )
+        
+        subparsers = parser.add_subparsers(dest="command", help="Command to execute")
+        
+        # Scan command
+        scan_parser = subparsers.add_parser("scan", help="Scan targets for open ports")
+        scan_parser.add_argument("-t", "--target", help="Target host(s) to scan (comma-separated)")
+        scan_parser.add_argument("-f", "--target-file", help="File containing target hosts (one per line)")
+        scan_parser.add_argument("-g", "--group", help="Target group to scan")
+        scan_parser.add_argument("-p", "--ports", help="Port(s) to scan (e.g., '80,443' or '1-1024')")
+        scan_parser.add_argument("--threads", type=int, default=100, help="Number of threads to use")
+        scan_parser.add_argument("--timeout", type=float, default=1.0, help="Connection timeout in seconds")
+        scan_parser.add_argument("--rate-limit", type=float, default=0.1, help="Rate limiting between connection attempts")
+        scan_parser.add_argument("--no-vuln-check", action="store_true", help="Skip vulnerability checking")
+        scan_parser.add_argument("--output", "-o", help="Output file for scan results")
+        scan_parser.add_argument("--format", default="json", choices=["json", "csv", "html", "all"], help="Output format")
+        scan_parser.add_argument("--encrypt", action="store_true", help="Encrypt scan results")
+        scan_parser.add_argument("--verbose", "-v", action="store_true", help="Show verbose output")
+        scan_parser.add_argument("--profile", help="Load settings from a saved profile")
+        scan_parser.add_argument("--save-profile", help="Save current settings to a profile")
+        scan_parser.add_argument("--policy", help="Use a saved scan policy")
+        scan_parser.add_argument("--list-policies", action="store_true", help="List available scan policies")
+        scan_parser.add_argument("--list-groups", action="store_true", help="List available target groups")
+
+    def get_targets(self, args):
+        """
+        Get a list of targets from command-line arguments, file, or target group.
+        
+        Args:
+            args: Command-line arguments
+            
+        Returns:
+            list: List of targets to scan
+        """
+        targets = []
+        
+        # Get targets from command line
+        if args.target:
+            targets.extend([t.strip() for t in args.target.split(',') if t.strip()])
+        
+        # Get targets from file
+        if hasattr(args, 'target_file') and args.target_file:
+            try:
+                target_file = Path(args.target_file)
+                if target_file.exists():
+                    with open(target_file, 'r') as f:
+                        file_targets = [line.strip() for line in f if line.strip() and not line.startswith('#')]
+                        targets.extend(file_targets)
+                        self.logger.info(f"Loaded {len(file_targets)} targets from {args.target_file}")
+                else:
+                    self.logger.error(f"Target file {args.target_file} not found")
+                    print(f"{Fore.RED}Error: Target file {args.target_file} not found{Style.RESET_ALL}")
+            except Exception as e:
+                self.logger.error(f"Failed to read target file {args.target_file}: {e}")
+                print(f"{Fore.RED}Error reading target file: {str(e)}{Style.RESET_ALL}")
+        
+        # Get targets from group
+        if hasattr(args, 'group') and args.group:
+            try:
+                from utils.target_groups import get_target_groups
+                groups_manager = get_target_groups()
+                group_targets = groups_manager.get_targets(args.group)
+                
+                if group_targets:
+                    targets.extend(group_targets)
+                    self.logger.info(f"Loaded {len(group_targets)} targets from group {args.group}")
+                    print(f"{Fore.CYAN}Loaded {len(group_targets)} targets from group '{args.group}'{Style.RESET_ALL}")
+                else:
+                    self.logger.warning(f"No targets found in group {args.group}")
+                    print(f"{Fore.YELLOW}Warning: No targets found in group '{args.group}'{Style.RESET_ALL}")
+            except Exception as e:
+                self.logger.error(f"Failed to get targets from group {args.group}: {e}")
+                print(f"{Fore.RED}Error getting targets from group: {str(e)}{Style.RESET_ALL}")
+        
+        # Remove duplicates while preserving order
+        unique_targets = []
+        for target in targets:
+            if target not in unique_targets:
+                unique_targets.append(target)
+        
+        return unique_targets
+
+    def scan_targets(self, args):
+        """Scan targets for open ports and services."""
+        # If listing policies was requested, show them and exit
+        if args.list_policies:
+            from utils.scan_policy import get_policy_manager
+            policy_manager = get_policy_manager()
+            policy_manager.print_policies()
+            return
+        
+        # If listing groups was requested, show them and exit
+        if args.list_groups:
+            from utils.target_groups import get_target_groups
+            groups_manager = get_target_groups()
+            groups_manager.print_groups()
+            return
+        
+        # If a policy was specified, apply it to the arguments
+        if args.policy:
+            from utils.scan_policy import get_policy_manager
+            policy_manager = get_policy_manager()
+            args = policy_manager.apply_policy_to_args(args.policy, args)
+        
+        # Ensure we have targets to scan
+        targets = self.get_targets(args)
+        if not targets:
+            print(f"{Fore.RED}Error: No targets specified. Use -t/--target, -f/--target-file, or -g/--group{Style.RESET_ALL}")
+            return
+
+        # ... rest of the function remains unchanged ...

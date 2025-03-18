@@ -16,6 +16,7 @@ This tool is intended for authorized use only. Users must ensure they have expli
 - Report Comparison Tool - Compare scan results over time to identify network changes
 - **NEW: Port Behavior Analysis** - Detect anomalous port behavior patterns across multiple scans
 - **NEW: Scan Policy Templates** - Create, manage, and apply reusable scan configurations
+- **NEW: Target Groups** - Organize targets into logical groups for easier management and scanning
 
 ## Requirements
 - Python 3.7+
@@ -50,12 +51,67 @@ python gatekeeper.py scan -t example.com -p 1-1024
 
 Options:
 - `-t, --target`: Target hostname or IP address
+- `-f, --target-file`: File containing targets (one per line)
+- `-g, --group`: Target group to scan
 - `-p, --ports`: Port range to scan (e.g., "80" or "1-1024")
 - `--threads`: Number of concurrent threads (default: 100)
 - `--timeout`: Connection timeout in seconds (default: 1)
 - `--rate-limit`: Time between connection attempts in seconds (default: 0.1)
 - `--policy`: Name of scan policy to use
 - `--list-policies`: List available scan policies
+- `--list-groups`: List available target groups
+
+## Target Groups
+The target groups feature allows you to organize scanning targets into logical groups for easier management and more efficient scanning operations.
+
+### Using Target Groups
+
+List available groups:
+```bash
+python gatekeeper.py groups --list
+```
+
+Show group details:
+```bash
+python gatekeeper.py groups --show web_servers
+```
+
+Scan a target group:
+```bash
+python gatekeeper.py scan -g web_servers -p 80,443
+```
+
+### Managing Target Groups
+
+Create a new group:
+```bash
+python manage_groups.py create web_servers --name "Web Servers" --description "Company web servers" --targets "example.com,192.168.1.100,192.168.1.101"
+```
+
+Add targets to a group:
+```bash
+python manage_groups.py add web_servers --targets "newserver.example.com,192.168.1.102"
+```
+
+Remove targets from a group:
+```bash
+python manage_groups.py remove web_servers --targets "192.168.1.100"
+```
+
+Import targets from a file:
+```bash
+python manage_groups.py import web_servers targets.txt
+```
+
+Export targets to a file:
+```bash
+python manage_groups.py export web_servers exported_targets.txt
+```
+
+Delete a group:
+```bash
+python manage_groups.py delete web_servers
+```
 
 ## Scan Policy Templates
 The scan policy templates feature allows you to define, save, and reuse scanning configurations for different security scenarios.
