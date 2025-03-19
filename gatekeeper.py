@@ -17,6 +17,7 @@ from utils.report_compare import ReportComparer, find_latest_reports
 from utils.port_behavior import PortBehaviorAnalyzer
 from utils.scan_policy import get_policy_manager
 from utils.target_groups import get_target_groups
+from utils.export import export_results
 import asyncio
 from tqdm import tqdm
 from colorama import init, Fore, Style
@@ -552,77 +553,65 @@ class GateKeeper:
     def parse_arguments(self):
         """Parse command-line arguments."""
         parser = argparse.ArgumentParser(
-            description="GateKeeper - Network Security Scanner",
-            formatter_class=argparse.ArgumentDefaultsHelpFormatter
+            description='GateKeeper Network Port Scanner',
+            epilog='A port scanning tool for network security testing and administration.'
         )
-        
-        # Create subparsers for different commands
         subparsers = parser.add_subparsers(dest='command', help='Command to execute')
-        
+
         # Scan command
-        scan_parser = subparsers.add_parser('scan', help='Perform a port scan')
-        scan_parser.add_argument('-t', '--target', help='Target IP address, hostname, or CIDR range')
-        scan_parser.add_argument('-p', '--ports', default='1-1000', help='Port(s) to scan (e.g., 80,443 or 1-1000)')
-        scan_parser.add_argument('--timeout', type=float, default=1.0, help='Timeout for connection attempts')
-        scan_parser.add_argument('--threads', type=int, default=100, help='Number of concurrent threads')
-        scan_parser.add_argument('-o', '--output', help='Output file for results (without extension)')
-        scan_parser.add_argument('-f', '--format', choices=['json', 'csv', 'html', 'all'], default='json',
-                            help='Output format for results')
-        scan_parser.add_argument('-v', '--verbose', action='store_true', help='Enable verbose output')
-        scan_parser.add_argument('--no-vuln-check', action='store_true', help='Disable vulnerability checking')
-        scan_parser.add_argument('--profile', help='Load settings from a saved profile')
-        scan_parser.add_argument('--save-profile', help='Save current settings as a profile')
-        scan_parser.add_argument('--description', help='Description for the saved profile')
+        scan_parser = subparsers.add_parser('scan', help='Scan ports on a target')
+        scan_target_group = scan_parser.add_mutually_exclusive_group(required=True)
+        scan_target_group.add_argument('-t', '--target', help='Target hostname or IP address')
+        scan_target_group.add_argument('-f', '--target-file', help='File containing targets (one per line)')
+        scan_target_group.add_argument('-g', '--group', help='Target group to scan')
+        scan_parser.add_argument('-p', '--ports', help='Port or port range to scan (e.g., "80" or "1-1024")', default='1-1000')
+        scan_parser.add_argument('--threads', type=int, help='Number of threads to use', default=100)
+        scan_parser.add_argument('--timeout', type=float, help='Connection timeout in seconds', default=1.0)
+        scan_parser.add_argument('--rate-limit', type=float, help='Time between connection attempts', default=0.1)
+        scan_parser.add_argument('--policies', action='store_true', help='List available scan policies')
+        scan_parser.add_argument('--policy', help='Apply a scan policy')
+        scan_parser.add_argument('--output', help='Output file name prefix')
+        scan_parser.add_argument('--format', choices=['json', 'csv', 'html', 'all'], default='json', 
+                                help='Output format(s) (default: json)')
+        scan_parser.add_argument('--encrypt', action='store_true', help='Encrypt the output file')
         
-        # Profile commands
-        profile_parser = subparsers.add_parser('profile', help='Manage configuration profiles')
-        profile_subparsers = profile_parser.add_subparsers(dest='profile_command', help='Profile command')
+        # Reports command
+        reports_parser = subparsers.add_parser('reports', help='List available scan reports')
         
-        # List profiles
-        list_parser = profile_subparsers.add_parser('list', help='List available profiles')
+        # Compare command
+        compare_parser = subparsers.add_parser('compare', help='Compare two scan reports')
+        compare_parser.add_argument('--report1', required=True, help='First report file path')
+        compare_parser.add_argument('--report2', required=True, help='Second report file path')
+        compare_parser.add_argument('--output', help='Output file name')
         
-        # Show profile details
-        show_parser = profile_subparsers.add_parser('show', help='Show profile details')
-        show_parser.add_argument('name', help='Profile name')
+        # Behavior analysis command
+        behavior_parser = subparsers.add_parser('behavior', help='Analyze port behavior across multiple scans')
+        behavior_parser.add_argument('-t', '--target', help='Specific target to analyze')
+        behavior_parser.add_argument('--days', type=int, default=30, help='Number of days to analyze')
+        behavior_parser.add_argument('--output', help='Output file name')
         
-        # Delete profile
-        delete_parser = profile_subparsers.add_parser('delete', help='Delete a profile')
-        delete_parser.add_argument('name', help='Profile name')
+        # Policies command
+        policies_parser = subparsers.add_parser('policies', help='Manage scan policies')
+        policies_parser.add_argument('--list-policies', action='store_true', help='List available scan policies')
+        policies_parser.add_argument('--show-policy', help='Show details of a specific policy')
         
-        # Interactive mode
-        interactive_parser = subparsers.add_parser('interactive', help='Start interactive TUI mode')
+        # Groups command
+        groups_parser = subparsers.add_parser('groups', help='Manage target groups')
+        groups_parser.add_argument('--list', action='store_true', help='List available target groups')
+        groups_parser.add_argument('--show', help='Show details of a specific group')
         
-        # Add report comparison command
-        compare_parser = subparsers.add_parser('compare', help='Compare scan reports')
-        compare_parser.add_argument('--report1', required=True, help='Path to first (baseline) report')
-        compare_parser.add_argument('--report2', required=True, help='Path to second (comparison) report')
-        compare_parser.add_argument('-o', '--output', help='Output file for comparison results')
+        # Export command (new)
+        export_parser = subparsers.add_parser('export', help='Export scan results to different formats')
+        export_parser.add_argument('report', help='Path to the report file to export')
+        export_parser.add_argument('--format', choices=['csv', 'html', 'both'], default='both', 
+                                  help='Export format (default: both)')
+        export_parser.add_argument('--output', help='Output file name (without extension)')
         
-        # Add report listing command
-        list_reports_parser = subparsers.add_parser('reports', help='List available scan reports')
-        list_reports_parser.add_argument('-n', '--limit', type=int, default=10, help='Maximum number of reports to list')
-        
-        # Add port behavior analysis command
-        behavior_parser = subparsers.add_parser('behavior', help='Analyze port behavior over time')
-        behavior_parser.add_argument('-t', '--target', help='Target host to analyze (analyze all targets if not specified)')
-        behavior_parser.add_argument('-n', '--max-reports', type=int, default=10, help='Maximum number of reports to analyze')
-        behavior_parser.add_argument('-o', '--output', help='Output file for analysis results')
-        
-        # Add scan policy commands
-        policy_parser = subparsers.add_parser('policies', help='Manage scan policies')
-        policy_parser.add_argument('--list-policies', action='store_true', help='List available scan policies')
-        
-        # Add groups command
-        groups_parser = subparsers.add_parser("groups", help="Manage target groups")
-        groups_parser.add_argument("--list", action="store_true", help="List available target groups")
-        groups_parser.add_argument("--show", help="Show details of a specific group")
-        
-        # For backward compatibility, if no command is specified, default to 'scan'
         args = parser.parse_args()
+        
         if not args.command:
-            args.command = 'scan'
-            # Re-parse with default command
-            args = parser.parse_args(['scan'] + sys.argv[1:])
+            parser.print_help()
+            sys.exit(1)
         
         return args
 
@@ -680,147 +669,235 @@ class GateKeeper:
             return None
 
     def main(self):
-        """Main execution function."""
-        args = self.parse_arguments()
+        """Main function to handle the command-line interface."""
+        args = parse_arguments()
         
-        # Handle interactive mode
-        if args.command == 'interactive':
-            self.start_interactive_mode()
-            return
+        # Display banner
+        display_banner()
         
-        # Handle profile commands
-        elif args.command == 'profile':
-            if args.profile_command == 'list':
-                self.list_config_profiles()
-                return
-            elif args.profile_command == 'show':
-                self.show_config_profile(args.name)
-                return
-            elif args.profile_command == 'delete':
-                self.delete_config_profile(args.name)
-                return
+        # Initialize GateKeeper
+        gatekeeper = GateKeeper()
         
-        # Handle report comparison
-        elif args.command == 'compare':
-            self.compare_reports(args.report1, args.report2, args.output)
-            return
-        
-        # Handle report listing
-        elif args.command == 'reports':
-            self.list_available_reports(args.limit)
-            return
-            
-        # Handle port behavior analysis
-        elif args.command == 'behavior':
-            self.analyze_port_behavior(args.target, args.max_reports, args.output)
-            return
-        
-        # Handle scan command (default)
-        elif args.command == 'scan':
-            # Load profile if specified
-            if args.profile:
-                profile_args = self.load_config_profile(args.profile)
-                if not profile_args:
-                    sys.exit(1)
-
-                # Override profile settings with command line arguments
-                for key, value in vars(args).items():
-                    if key not in ['command', 'profile'] and value is not None:
-                        setattr(profile_args, key, value)
-                
-                args = profile_args
-            
-            # Check if target is specified
-            if not args.target:
-                print(f"{Fore.RED}Error: Target is required{Style.RESET_ALL}")
+        if args.command == 'scan':
+            # Handle target specification
+            target = None
+            if args.target:
+                target = args.target
+            elif args.target_file:
+                with open(args.target_file, 'r') as f:
+                    targets = [line.strip() for line in f if line.strip()]
+                # For now, just use the first target
+                # Future enhancement: scan multiple targets
+                if targets:
+                    target = targets[0]
+            elif args.group:
+                # Get targets from the specified group
+                target_groups = get_target_groups()
+                group = target_groups.get_group(args.group)
+                if group and group.get('targets'):
+                    # For now, just use the first target
+                    # Future enhancement: scan multiple targets
+                    target = group['targets'][0]
+                    
+            if not target:
+                print(f"{Fore.RED}Error: No target specified{Style.RESET_ALL}")
                 sys.exit(1)
             
-            self.target = args.target
-            self.ports = self.validate_ports(args.ports)
-            self.timeout = args.timeout
-            self.threads = args.threads
-            self.verbose = args.verbose
-
-            # Display disclaimer and get user acceptance
-            if not self.display_disclaimer():
-                sys.exit(0)
+            # Handle port specification
+            ports = gatekeeper.parse_ports(args.ports)
             
-            # Save profile if requested
-            if args.save_profile:
-                self.save_config_profile(args.save_profile, args)
-
-            # Expand targets if CIDR notation is used
-            targets = self.expand_targets(self.target)
+            # Apply scan policy if specified
+            if args.policy:
+                policy_manager = get_policy_manager()
+                policy = policy_manager.get_policy(args.policy)
+                if policy:
+                    # Override settings from policy
+                    if 'ports' in policy:
+                        ports = gatekeeper.parse_ports(policy['ports'])
+                    if 'threads' in policy:
+                        args.threads = policy['threads']
+                    if 'timeout' in policy:
+                        args.timeout = policy['timeout']
+                    if 'rate_limit' in policy:
+                        args.rate_limit = policy['rate_limit']
+                    print(f"{Fore.GREEN}Applied scan policy: {policy['name']}{Style.RESET_ALL}")
+                else:
+                    print(f"{Fore.RED}Error: Policy '{args.policy}' not found{Style.RESET_ALL}")
+                    sys.exit(1)
             
-            all_results = {}
-            total_start_time = time.time()
+            # Set scan parameters
+            gatekeeper.target = target
+            gatekeeper.ports = ports
+            gatekeeper.threads = args.threads
+            gatekeeper.timeout = args.timeout
+            gatekeeper.rate_limit = args.rate_limit
             
-            # Scan each target
-            for i, target in enumerate(targets):
-                if len(targets) > 1:
-                    print(f"\n{Fore.CYAN}Scanning target {i+1}/{len(targets)}: {target}{Style.RESET_ALL}")
-                
-                self.target = target  # Update current target
-                self.logger.info(f"Starting scan of {self.target}")
-                
-                # Scan ports
-                results = asyncio.run(self.scan_ports())
-                
-                # Check for vulnerabilities if not disabled
-                if not args.no_vuln_check:
-                    print(f"\n{Fore.CYAN}Checking for vulnerabilities...{Style.RESET_ALL}")
-                    results = self.check_vulnerabilities(results)
-                
-                all_results[target] = results
-                
-                # Display results for this target
-                self.display_results(results)
-                
-                # Save results for this target
-                if args.output:
-                    output_file = f"{args.output}_{target.replace('.', '_')}" if len(targets) > 1 else args.output
-                    self.save_results(results, filename=output_file, encrypt=False, format=args.format)
+            # Run the scan
+            start_time = time.time()
             
-            total_duration = time.time() - total_start_time
+            display_scan_start(target, len(ports))
+            results = gatekeeper.scan()
             
-            # Display summary if multiple targets were scanned
-            if len(targets) > 1:
-                print(f"\n{Fore.CYAN}=== Scan Summary ==={Style.RESET_ALL}")
-                print(f"Scanned {len(targets)} targets in {total_duration:.2f} seconds")
-                
-                total_open = sum(len(results) for results in all_results.values())
-                print(f"{Fore.GREEN}Found {total_open} open ports across all targets{Style.RESET_ALL}")
+            end_time = time.time()
+            scan_time = end_time - start_time
             
-            self.logger.info("Scan complete")
-            return
-
-        # Handle scan policy commands
-        elif args.command == 'policies':
-            # New subcommand for managing policies
-            # Use the standalone script for now
-            os.system(f"python manage_policies.py {' '.join(sys.argv[2:])}")
-            return
-
-        # Handle groups command
-        elif args.command == 'groups':
-            self.handle_groups_command(args)
-            return
-
-        # If no valid command was found, print help
-        else:
-            self.parse_arguments().print_help()
-
-    def handle_groups_command(self, args):
-        """Handle the groups command."""
-        groups_manager = get_target_groups()
+            display_scan_complete(len(results), scan_time)
+            
+            # Save the results if an output file is specified
+            if args.output:
+                gatekeeper.save_results(results, args.output, args.format, args.encrypt)
+            
+        elif args.command == 'reports':
+            # List available reports
+            reports = find_latest_reports()
+            if not reports:
+                print(f"{Fore.YELLOW}No scan reports found.{Style.RESET_ALL}")
+            else:
+                print(f"{Fore.GREEN}Available scan reports:{Style.RESET_ALL}")
+                for i, report in enumerate(reports, 1):
+                    # Extract and parse metadata
+                    try:
+                        with open(report, 'r') as f:
+                            data = json.load(f)
+                        
+                        target = data.get('scan_info', {}).get('target', 'Unknown')
+                        timestamp = data.get('scan_info', {}).get('timestamp', 'Unknown')
+                        open_ports = data.get('scan_info', {}).get('open_ports_found', 0)
+                        
+                        print(f"{i}. {Fore.CYAN}{os.path.basename(report)}{Style.RESET_ALL}")
+                        print(f"   Target: {target}")
+                        print(f"   Date: {timestamp}")
+                        print(f"   Open Ports: {open_ports}")
+                        print()
+                    except Exception as e:
+                        print(f"{i}. {os.path.basename(report)} - Error reading metadata: {e}")
         
-        if args.list:
-            groups_manager.print_groups()
-        elif args.show:
-            groups_manager.print_group_details(args.show)
-        else:
-            print(f"{Fore.YELLOW}Use --list to list all groups or --show GROUP_ID to show details of a specific group{Style.RESET_ALL}")
-            print(f"{Fore.YELLOW}For full group management, use the manage_groups.py script{Style.RESET_ALL}")
+        elif args.command == 'compare':
+            # Compare two scan reports
+            comparer = ReportComparer(args.report1, args.report2)
+            diff = comparer.compare()
+            
+            comparer.print_diff_summary(diff)
+            
+            if args.output:
+                comparer.save_diff(diff, args.output)
+        
+        elif args.command == 'behavior':
+            # Analyze port behavior across multiple scans
+            analyzer = PortBehaviorAnalyzer(target=args.target, max_days=args.days)
+            results = analyzer.analyze()
+            
+            analyzer.print_results(results)
+            
+            if args.output:
+                analyzer.save_results(results, args.output)
+        
+        elif args.command == 'policies':
+            # List available scan policies
+            policy_manager = get_policy_manager()
+            
+            if args.list_policies:
+                policies = policy_manager.list_policies()
+                
+                if not policies:
+                    print(f"{Fore.YELLOW}No scan policies found.{Style.RESET_ALL}")
+                else:
+                    print(f"{Fore.GREEN}Available scan policies:{Style.RESET_ALL}")
+                    for policy_id, policy in policies.items():
+                        print(f"- {Fore.CYAN}{policy_id}{Style.RESET_ALL}: {policy['name']}")
+                        print(f"  {policy['description']}")
+                        print(f"  Ports: {policy['ports']}")
+                        print()
+            
+            elif args.show_policy:
+                policy = policy_manager.get_policy(args.show_policy)
+                
+                if not policy:
+                    print(f"{Fore.RED}Policy '{args.show_policy}' not found.{Style.RESET_ALL}")
+                else:
+                    print(f"{Fore.GREEN}Policy: {policy['name']}{Style.RESET_ALL}")
+                    print(f"ID: {args.show_policy}")
+                    print(f"Description: {policy['description']}")
+                    print(f"Ports: {policy['ports']}")
+                    print(f"Threads: {policy.get('threads', 'default')}")
+                    print(f"Timeout: {policy.get('timeout', 'default')}")
+                    print(f"Rate Limit: {policy.get('rate_limit', 'default')}")
+                    print(f"Created: {policy.get('created_at', 'unknown')}")
+                    if policy.get('built_in'):
+                        print(f"Built-in: Yes")
+        
+        elif args.command == 'groups':
+            # Handle groups command
+            target_groups = get_target_groups()
+            
+            if args.list:
+                groups = target_groups.list_groups()
+                
+                if not groups:
+                    print(f"{Fore.YELLOW}No target groups found.{Style.RESET_ALL}")
+                else:
+                    print(f"{Fore.GREEN}Available target groups:{Style.RESET_ALL}")
+                    for group_id, group in groups.items():
+                        print(f"- {Fore.CYAN}{group_id}{Style.RESET_ALL}: {group['name']}")
+                        print(f"  {group['description']}")
+                        print(f"  Targets: {len(group['targets'])}")
+                        print()
+            
+            elif args.show:
+                target_groups.print_group_details(args.show)
+        
+        elif args.command == 'export':
+            # Export scan results to different formats
+            try:
+                # Check if the report file exists
+                if not os.path.exists(args.report):
+                    print(f"{Fore.RED}Error: Report file '{args.report}' not found{Style.RESET_ALL}")
+                    sys.exit(1)
+                    
+                # Load the report data
+                with open(args.report, 'r') as f:
+                    try:
+                        report_data = json.load(f)
+                    except json.JSONDecodeError:
+                        print(f"{Fore.RED}Error: Invalid JSON format in report file{Style.RESET_ALL}")
+                        sys.exit(1)
+                
+                # Determine the output filename
+                if args.output:
+                    output_filename = args.output
+                else:
+                    # Use the report filename without extension
+                    output_filename = os.path.splitext(os.path.basename(args.report))[0]
+                
+                # Prepare the results data for export
+                target = report_data.get('scan_info', {}).get('target', 'Unknown')
+                scan_date = report_data.get('scan_info', {}).get('timestamp', datetime.now().isoformat())
+                
+                # Calculate scan duration if available
+                scan_duration = "Unknown"
+                if 'scan_info' in report_data and 'scan_duration' in report_data['scan_info']:
+                    scan_duration = f"{report_data['scan_info']['scan_duration']:.2f} seconds"
+                
+                # Format the results for our exporter
+                results = {
+                    "target": target,
+                    "scan_date": scan_date,
+                    "scan_duration": scan_duration,
+                    "open_ports": report_data.get('results', [])
+                }
+                
+                # Export based on the format specified
+                if args.format == 'csv' or args.format == 'both':
+                    csv_path = export_results(results, output_filename, 'csv')
+                    print(f"{Fore.GREEN}Exported CSV report to: {csv_path}{Style.RESET_ALL}")
+                    
+                if args.format == 'html' or args.format == 'both':
+                    html_path = export_results(results, output_filename, 'html')
+                    print(f"{Fore.GREEN}Exported HTML report to: {html_path}{Style.RESET_ALL}")
+                    
+            except Exception as e:
+                print(f"{Fore.RED}Error during export: {str(e)}{Style.RESET_ALL}")
+                sys.exit(1)
 
     def setup_argparse(self):
         """Set up command-line argument parsing."""

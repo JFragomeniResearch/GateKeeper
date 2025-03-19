@@ -17,6 +17,7 @@ This tool is intended for authorized use only. Users must ensure they have expli
 - **NEW: Port Behavior Analysis** - Detect anomalous port behavior patterns across multiple scans
 - **NEW: Scan Policy Templates** - Create, manage, and apply reusable scan configurations
 - **NEW: Target Groups** - Organize targets into logical groups for easier management and scanning
+- **NEW: Export Tool** - Export scan results to CSV and HTML formats for reporting and analysis
 
 ## Requirements
 - Python 3.7+
@@ -225,3 +226,40 @@ Behavior analysis reports are saved in the `reports/behavior/` directory.
 Joseph Fragomeni
 
 Application created for applied/educational purposes.
+
+## Export Functionality
+The new export feature allows you to export scan results to different formats for easier data analysis and reporting.
+
+### Exporting Scan Results
+
+Export a scan report to both CSV and HTML formats using the GateKeeper command:
+```bash
+python gatekeeper.py export reports/scan_example.com_20230601.json
+```
+
+Or use the standalone export script for better user experience:
+```bash
+python export_report.py reports/scan_example.com_20230601.json
+```
+
+Export a scan report to CSV format only:
+```bash
+python export_report.py reports/scan_example.com_20230601.json --format csv
+```
+
+Export a scan report to HTML format only:
+```bash
+python export_report.py reports/scan_example.com_20230601.json --format html
+```
+
+Specify a custom output filename:
+```bash
+python export_report.py reports/scan_example.com_20230601.json --output custom_report_name
+```
+
+The exported files will be saved in the `reports/exports/` directory.
+
+### Export Formats
+
+- **CSV Export**: Creates a comma-separated values file that can be imported into spreadsheet software like Excel or Google Sheets for data analysis.
+- **HTML Export**: Creates a well-formatted HTML report with styling for easy viewing in a web browser. The HTML report includes scan information and a table of open ports with their details.
