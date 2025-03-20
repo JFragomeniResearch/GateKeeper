@@ -18,6 +18,7 @@ This tool is intended for authorized use only. Users must ensure they have expli
 - **NEW: Scan Policy Templates** - Create, manage, and apply reusable scan configurations
 - **NEW: Target Groups** - Organize targets into logical groups for easier management and scanning
 - **NEW: Export Tool** - Export scan results to CSV and HTML formats for reporting and analysis
+- **NEW: Scheduled Scanning** - Set up recurring scans to run automatically at specified intervals
 
 ## Requirements
 - Python 3.7+
@@ -30,6 +31,7 @@ This tool is intended for authorized use only. Users must ensure they have expli
   - dnspython
   - cryptography
   - pyyaml (for policy import/export)
+  - schedule (for scheduled scanning)
 
 ## Installation
 
@@ -263,3 +265,99 @@ The exported files will be saved in the `reports/exports/` directory.
 
 - **CSV Export**: Creates a comma-separated values file that can be imported into spreadsheet software like Excel or Google Sheets for data analysis.
 - **HTML Export**: Creates a well-formatted HTML report with styling for easy viewing in a web browser. The HTML report includes scan information and a table of open ports with their details.
+
+## Scheduled Scanning
+The new scheduled scanning feature allows you to set up recurring scans at specified intervals. This is especially useful for continuous security monitoring of your network infrastructure.
+
+### Managing Scheduled Scans
+
+List all scheduled scans:
+```bash
+python scheduled_scan.py list
+```
+
+Add a new daily scheduled scan:
+```bash
+python scheduled_scan.py add --name daily_webservers --target-group web_servers --policy quick --time 02:00 --interval daily
+```
+
+Add a weekly scheduled scan:
+```bash
+python scheduled_scan.py add --name weekly_scan --target example.com --ports 1-1024 --interval weekly --day monday --time 22:00
+```
+
+Add a monthly scheduled scan:
+```bash
+python scheduled_scan.py add --name monthly_compliance --target-group all_servers --policy compliance --interval monthly --day 1 --time 01:00
+```
+
+Remove a scheduled scan:
+```bash
+python scheduled_scan.py remove --name daily_webservers
+```
+
+### Running the Scheduler
+
+Run the scheduler in the foreground:
+```bash
+python scheduled_scan.py run
+```
+
+Run the scheduler in the background:
+```bash
+python scheduled_scan.py run --daemon
+```
+
+### System Service Setup
+
+#### Linux (systemd)
+
+To run the scheduler as a system service on Linux systems with systemd:
+
+1. Copy the service template:
+```bash
+sudo cp systemd/gatekeeper-scheduler.service /etc/systemd/system/
+```
+
+2. Edit the service file to set the correct paths and username:
+```bash
+sudo nano /etc/systemd/system/gatekeeper-scheduler.service
+```
+
+3. Enable and start the service:
+```bash
+sudo systemctl enable gatekeeper-scheduler.service
+sudo systemctl start gatekeeper-scheduler.service
+```
+
+#### Windows
+
+To set up the scheduler as a scheduled task on Windows:
+
+1. Run the setup script as Administrator:
+```cmd
+scripts\setup_windows_task.bat
+```
+
+2. You can customize the task settings in the Windows Task Scheduler.
+
+### Schedule Configuration
+
+Schedules are stored in YAML format in the `schedules/schedules.yaml` file. You can view a sample configuration in `schedules/sample_schedules.yaml`.
+
+Each schedule includes the following settings:
+- `interval`: How often to run the scan (hourly, daily, weekly, monthly)
+- `time`: The time to run the scan in HH:MM format
+- `day`: For weekly scans, the day of the week; for monthly scans, the day of the month
+- `target` or `target_group`: The scan target (individual host or target group)
+- `policy`: The scan policy to apply
+- `ports`: Optional port range to scan
+- `format`: Output format (json, csv, html, all)
+
+### Logs
+
+The scheduler logs are stored in `logs/scheduler.log`. You can monitor this file to track scheduled scan execution:
+
+```bash
+tail -f logs/scheduler.log
+```

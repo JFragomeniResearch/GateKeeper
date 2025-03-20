@@ -1,0 +1,29 @@
+daily_webservers:
+  interval: daily
+  time: '02:00'
+  target_group: web_servers
+  policy: quick
+  format: json
+  created_at: '2023-03-19T10:00:00'
+  last_run: null
+
+weekly_security_scan:
+  interval: weekly
+  time: '22:00'
+  day: sunday
+  target: example.com
+  ports: '1-65535'
+  policy: full_scan
+  format: html
+  created_at: '2023-03-19T10:30:00'
+  last_run: null
+
+monthly_compliance:
+  interval: monthly
+  time: '01:00'
+  day: 1
+  target_group: all_servers
+  policy: compliance
+  format: all
+  created_at: '2023-03-19T11:00:00'
+  last_run: null 

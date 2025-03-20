@@ -1,0 +1,14 @@
+[Unit]
+Description=GateKeeper Network Scanner Scheduler
+After=network.target
+
+[Service]
+Type=simple
+User=<username>
+WorkingDirectory=/path/to/gatekeeper
+ExecStart=/usr/bin/python /path/to/gatekeeper/scheduled_scan.py run
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target 
