@@ -19,6 +19,7 @@ This tool is intended for authorized use only. Users must ensure they have expli
 - **NEW: Target Groups** - Organize targets into logical groups for easier management and scanning
 - **NEW: Export Tool** - Export scan results to CSV and HTML formats for reporting and analysis
 - **NEW: Scheduled Scanning** - Set up recurring scans to run automatically at specified intervals
+- **NEW: Notification System** - Receive alerts via email and webhooks when scan results match defined criteria
 
 ## Requirements
 - Python 3.7+
@@ -32,6 +33,7 @@ This tool is intended for authorized use only. Users must ensure they have expli
   - cryptography
   - pyyaml (for policy import/export)
   - schedule (for scheduled scanning)
+  - requests (for webhook notifications)
 
 ## Installation
 
@@ -63,6 +65,7 @@ Options:
 - `--policy`: Name of scan policy to use
 - `--list-policies`: List available scan policies
 - `--list-groups`: List available target groups
+- `--notify`: Send notifications for scan results based on configured rules
 
 ## Target Groups
 The target groups feature allows you to organize scanning targets into logical groups for easier management and more efficient scanning operations.
@@ -361,3 +364,100 @@ The scheduler logs are stored in `logs/scheduler.log`. You can monitor this file
 ```bash
 tail -f logs/scheduler.log
 ```
+
+## Notification System
+The new notification system allows you to receive alerts about scan results through various channels such as email and webhooks. You can define custom rules to trigger notifications based on specific conditions in the scan results.
+
+### Managing Notification Settings
+
+Show notification configuration:
+```bash
+python gatekeeper.py notifications show-config
+```
+
+Configure email notifications:
+```bash
+python gatekeeper.py notifications config-email --enable --smtp-server smtp.gmail.com --smtp-port 587 --username your-email@gmail.com --password your-password --from your-email@gmail.com --to recipient1@example.com recipient2@example.com --use-tls
+```
+
+Configure Slack webhook:
+```bash
+python gatekeeper.py notifications config-webhook --type slack --enable --url https://hooks.slack.com/services/your/webhook/url
+```
+
+Configure Microsoft Teams webhook:
+```bash
+python gatekeeper.py notifications config-webhook --type teams --enable --url https://example.webhook.office.com/webhookb2/your/webhook/url
+```
+
+### Managing Notification Rules
+
+List notification rules:
+```bash
+python gatekeeper.py notifications rules list
+```
+
+Add a new notification rule:
+```bash
+python gatekeeper.py notifications rules add --name "Critical Services" --condition specific_service --services ssh telnet ftp rdp --severity critical --notify email slack
+```
+
+Another example rule:
+```bash
+python gatekeeper.py notifications rules add --name "Many Open Ports" --condition min_open_ports --threshold 10 --severity warning --message "High number of open ports ({count}) on {target}"
+```
+
+Enable or disable a rule:
+```bash
+python gatekeeper.py notifications rules toggle --name "Critical Services" --enable
+python gatekeeper.py notifications rules toggle --name "Many Open Ports" --disable
+```
+
+Delete a rule:
+```bash
+python gatekeeper.py notifications rules delete --name "Critical Services"
+```
+
+### Testing Notifications
+
+Test email notifications:
+```bash
+python gatekeeper.py notifications test --channel email
+```
+
+Test Slack webhook:
+```bash
+python gatekeeper.py notifications test --channel slack
+```
+
+### Triggering Notifications on Scans
+
+Run a scan with notifications enabled:
+```bash
+python gatekeeper.py scan -t example.com -p 1-1024 --notify
+```
+
+Compare reports with notifications enabled:
+```bash
+python gatekeeper.py compare --report1 reports/scan1.json --report2 reports/scan2.json --notify
+```
+
+Analyze behavior with notifications enabled:
+```bash
+python gatekeeper.py behavior -t example.com --notify
+```
+
+### Default Notification Rules
+
+- **Any Open Ports**: Triggers a notification whenever any open ports are found
+- **Critical Services**: Triggers a critical notification when sensitive services (SSH, Telnet, FTP, RDP) are detected
+- **Many Open Ports**: Triggers a warning when more than 10 open ports are found on a target
+
+### Notification Templates
+
+Notification messages support the following template variables:
+- `{target}`: The target hostname or IP address
+- `{count}`: The number of open ports found
+- `{timestamp}`: The scan timestamp
+- `{condition}`: The rule condition that triggered the notification
+- `{threshold}`: The threshold value for conditions that use thresholds

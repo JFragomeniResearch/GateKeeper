@@ -18,6 +18,7 @@ from utils.port_behavior import PortBehaviorAnalyzer
 from utils.scan_policy import get_policy_manager
 from utils.target_groups import get_target_groups
 from utils.export import export_results
+from utils.notifications import get_notification_manager
 import asyncio
 from tqdm import tqdm
 from colorama import init, Fore, Style
@@ -61,6 +62,45 @@ class GateKeeper:
             raise e
         except Exception as e:
             raise RuntimeError(f"Failed to generate encryption key: {e}")
+
+    def _encrypt_file(self, file_path: str) -> bool:
+        """
+        Encrypt the contents of a file using Fernet symmetric encryption.
+        
+        Args:
+            file_path: Path to the file to encrypt
+            
+        Returns:
+            bool: True if encryption was successful, False otherwise
+        """
+        try:
+            # Check if file exists
+            if not os.path.exists(file_path):
+                self.logger.error(f"File not found: {file_path}")
+                return False
+                
+            # Read the file in binary mode
+            with open(file_path, 'rb') as f:
+                data = f.read()
+                
+            # Encrypt the data
+            f = Fernet(self.encryption_key)
+            encrypted_data = f.encrypt(data)
+            
+            # Write the encrypted data to a new file
+            encrypted_file = f"{file_path}.enc"
+            with open(encrypted_file, 'wb') as f:
+                f.write(encrypted_data)
+                
+            # Delete the original file
+            os.remove(file_path)
+            
+            self.logger.info(f"File encrypted successfully: {encrypted_file}")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error encrypting file {file_path}: {e}")
+            return False
 
     def _setup_logging(self) -> logging.Logger:
         """Set up logging configuration."""
@@ -286,10 +326,20 @@ class GateKeeper:
         except Exception as e:
             raise ValueError(f"Failed to decrypt results: {e}")
 
-    def save_results(self, results, filename=None, encrypt=True, format='json'):
+    def save_results(self, results, filename=None, encrypt=True, format='json', notify=False):
         """
         Save scan results to a file in the specified format.
         Supports JSON, CSV, and HTML formats.
+        
+        Args:
+            results: Scan results to save
+            filename: Output filename (without extension)
+            encrypt: Whether to encrypt the results
+            format: Output format (json, csv, html, all)
+            notify: Whether to send notifications
+            
+        Returns:
+            bool: True if successful, False otherwise
         """
         if not results:
             self.logger.warning("No results to save")
@@ -304,18 +354,20 @@ class GateKeeper:
         
         try:
             # Save in JSON format
+            json_file = f"{filename}.json"
+            json_data = {
+                "scan_info": {
+                    "target": self.target,
+                    "timestamp": datetime.now().isoformat(),
+                    "ports_scanned": len(self.ports),
+                    "open_ports_found": len(results),
+                    "scan_duration": time.time() - self.start_time if self.start_time else 0
+                },
+                "results": results
+            }
+            
             if format in ['json', 'all']:
-                json_file = f"{filename}.json"
                 with open(json_file, 'w') as f:
-                    json_data = {
-                        "scan_info": {
-                            "target": self.target,
-                            "timestamp": datetime.now().isoformat(),
-                            "ports_scanned": len(self.ports),
-                            "open_ports_found": len(results)
-                        },
-                        "results": results
-                    }
                     json.dump(json_data, f, indent=2)
                 
                 if encrypt:
@@ -415,7 +467,7 @@ class GateKeeper:
             <td>{port}</td>
             <td>{state}</td>
             <td>{service}</td>
-            <td>{html.escape(version)}</td>
+            <td>{html.escape(str(version))}</td>
         </tr>
 """
                     
@@ -473,6 +525,10 @@ class GateKeeper:
                 self.logger.info(f"Results saved to {html_file}")
                 print(f"{Fore.GREEN}Results saved to {html_file}{Style.RESET_ALL}")
             
+            # Process notifications if enabled
+            if notify:
+                self.process_notifications(json_data)
+            
             return True
         
         except Exception as e:
@@ -480,9 +536,75 @@ class GateKeeper:
             print(f"{Fore.RED}Error saving results: {e}{Style.RESET_ALL}")
             return False
 
-    def compare_reports(self, report1_path: str, report2_path: str, output_path: Optional[str] = None) -> str:
+    def process_notifications(self, scan_results: Dict[str, Any]) -> None:
         """
-        Compare two scan reports and identify differences.
+        Process scan results and send notifications based on configured rules.
+        
+        Args:
+            scan_results: The scan results to process
+        """
+        try:
+            notification_manager = get_notification_manager()
+            if not notification_manager:
+                self.logger.error("Failed to initialize notification manager")
+                return
+            
+            self.logger.info("Processing notifications for scan results")
+            
+            # Process notifications - this will check rules and send notifications
+            notification_results = notification_manager.process_scan_results(scan_results)
+            
+            # Log notification results
+            if notification_results.get('notification_sent', False):
+                self.logger.info("Notifications sent successfully")
+                print(f"{Fore.GREEN}Notifications sent for scan results{Style.RESET_ALL}")
+                
+                # Log triggered rules
+                for rule in notification_results.get('rules_triggered', []):
+                    rule_name = rule.get('rule_name', 'Unknown rule')
+                    severity = rule.get('severity', 'info').upper()
+                    severity_color = Fore.RED if severity == 'CRITICAL' else Fore.YELLOW if severity == 'WARNING' else Fore.CYAN
+                    print(f"  {severity_color}[{severity}]{Style.RESET_ALL} Rule triggered: {rule_name}")
+            else:
+                self.logger.info("No notifications were sent (no rules triggered or notifications disabled)")
+                print(f"{Fore.YELLOW}No notifications sent for scan results{Style.RESET_ALL}")
+        
+        except Exception as e:
+            self.logger.error(f"Error processing notifications: {e}")
+            print(f"{Fore.RED}Error processing notifications: {e}{Style.RESET_ALL}")
+
+    def scan_targets(self, args):
+        """Scan targets for open ports and services."""
+        # If listing policies was requested, show them and exit
+        if args.list_policies:
+            from utils.scan_policy import get_policy_manager
+            policy_manager = get_policy_manager()
+            policy_manager.print_policies()
+            return
+        
+        # If listing groups was requested, show them and exit
+        if args.list_groups:
+            from utils.target_groups import get_target_groups
+            groups_manager = get_target_groups()
+            groups_manager.print_groups()
+            return
+        
+        # If a policy was specified, apply it to the arguments
+        if args.policy:
+            from utils.scan_policy import get_policy_manager
+            policy_manager = get_policy_manager()
+            args = policy_manager.apply_policy_to_args(args.policy, args)
+        
+        # Ensure we have targets to scan
+        targets = self.get_targets(args)
+        if not targets:
+            print(f"{Fore.RED}Error: No targets specified. Use -t/--target, -f/--target-file, or -g/--group{Style.RESET_ALL}")
+            return
+            
+        # ... rest of the function remains unchanged ...
+
+    def compare_reports(self, report1_path: str, report2_path: str, output_path: Optional[str] = None) -> str:
+        """Compare two scan reports and identify differences.
         
         Args:
             report1_path: Path to first (baseline) report
@@ -522,8 +644,7 @@ class GateKeeper:
             return None
     
     def list_available_reports(self, limit: int = 10) -> None:
-        """
-        List available scan reports.
+        """List available scan reports.
         
         Args:
             limit: Maximum number of reports to list
@@ -557,7 +678,7 @@ class GateKeeper:
             epilog='A port scanning tool for network security testing and administration.'
         )
         subparsers = parser.add_subparsers(dest='command', help='Command to execute')
-
+        
         # Scan command
         scan_parser = subparsers.add_parser('scan', help='Scan ports on a target')
         scan_target_group = scan_parser.add_mutually_exclusive_group(required=True)
@@ -574,6 +695,7 @@ class GateKeeper:
         scan_parser.add_argument('--format', choices=['json', 'csv', 'html', 'all'], default='json', 
                                 help='Output format(s) (default: json)')
         scan_parser.add_argument('--encrypt', action='store_true', help='Encrypt the output file')
+        scan_parser.add_argument('--notify', action='store_true', help='Send notifications for scan results')
         
         # Reports command
         reports_parser = subparsers.add_parser('reports', help='List available scan reports')
@@ -583,12 +705,14 @@ class GateKeeper:
         compare_parser.add_argument('--report1', required=True, help='First report file path')
         compare_parser.add_argument('--report2', required=True, help='Second report file path')
         compare_parser.add_argument('--output', help='Output file name')
+        compare_parser.add_argument('--notify', action='store_true', help='Send notifications for comparison results')
         
         # Behavior analysis command
         behavior_parser = subparsers.add_parser('behavior', help='Analyze port behavior across multiple scans')
         behavior_parser.add_argument('-t', '--target', help='Specific target to analyze')
         behavior_parser.add_argument('--days', type=int, default=30, help='Number of days to analyze')
         behavior_parser.add_argument('--output', help='Output file name')
+        behavior_parser.add_argument('--notify', action='store_true', help='Send notifications for behavior analysis results')
         
         # Policies command
         policies_parser = subparsers.add_parser('policies', help='Manage scan policies')
@@ -607,6 +731,73 @@ class GateKeeper:
                                   help='Export format (default: both)')
         export_parser.add_argument('--output', help='Output file name (without extension)')
         
+        # Notifications command (new)
+        notify_parser = subparsers.add_parser('notifications', help='Manage notification settings')
+        notify_subparsers = notify_parser.add_subparsers(dest='notify_command', help='Notification command')
+        
+        # Show notification configuration
+        notify_subparsers.add_parser('show-config', help='Show notification configuration')
+        
+        # Configure email notifications
+        email_config_parser = notify_subparsers.add_parser('config-email', help='Configure email notifications')
+        email_config_parser.add_argument('--enable', action='store_true', help='Enable email notifications')
+        email_config_parser.add_argument('--disable', action='store_true', help='Disable email notifications')
+        email_config_parser.add_argument('--smtp-server', help='SMTP server address')
+        email_config_parser.add_argument('--smtp-port', type=int, help='SMTP server port')
+        email_config_parser.add_argument('--username', help='SMTP username')
+        email_config_parser.add_argument('--password', help='SMTP password')
+        email_config_parser.add_argument('--from', dest='from_address', help='From email address')
+        email_config_parser.add_argument('--to', dest='to_addresses', nargs='+', help='To email addresses')
+        email_config_parser.add_argument('--use-tls', action='store_true', help='Use TLS for SMTP connection')
+        email_config_parser.add_argument('--no-tls', action='store_true', help='Do not use TLS for SMTP connection')
+        
+        # Configure webhook notifications
+        webhook_config_parser = notify_subparsers.add_parser('config-webhook', help='Configure webhook notifications')
+        webhook_config_parser.add_argument('--type', choices=['slack', 'teams', 'custom'], required=True, help='Webhook type')
+        webhook_config_parser.add_argument('--enable', action='store_true', help='Enable webhook')
+        webhook_config_parser.add_argument('--disable', action='store_true', help='Disable webhook')
+        webhook_config_parser.add_argument('--url', help='Webhook URL')
+        webhook_config_parser.add_argument('--method', choices=['GET', 'POST'], help='HTTP method for custom webhook')
+        webhook_config_parser.add_argument('--headers', help='HTTP headers as JSON string for custom webhook')
+        webhook_config_parser.add_argument('--auth-username', help='Auth username for custom webhook')
+        webhook_config_parser.add_argument('--auth-password', help='Auth password for custom webhook')
+        
+        # Manage notification rules
+        rules_parser = notify_subparsers.add_parser('rules', help='Manage notification rules')
+        rules_subparsers = rules_parser.add_subparsers(dest='rules_command', help='Rules command')
+        
+        # List notification rules
+        rules_subparsers.add_parser('list', help='List notification rules')
+        
+        # Add notification rule
+        rule_add_parser = rules_subparsers.add_parser('add', help='Add notification rule')
+        rule_add_parser.add_argument('--name', required=True, help='Rule name')
+        rule_add_parser.add_argument('--condition', choices=[
+            'any_open_ports', 'min_open_ports', 'specific_port_open', 'specific_service', 'new_ports'
+        ], required=True, help='Rule condition')
+        rule_add_parser.add_argument('--threshold', type=int, help='Threshold value for min_open_ports condition')
+        rule_add_parser.add_argument('--message', help='Custom notification message template')
+        rule_add_parser.add_argument('--severity', choices=['info', 'warning', 'critical'], default='info', help='Rule severity')
+        rule_add_parser.add_argument('--notify', nargs='+', choices=['email', 'slack', 'teams', 'custom'], default=['email'], help='Notification channels')
+        rule_add_parser.add_argument('--ports', nargs='+', help='Specific ports for specific_port_open condition')
+        rule_add_parser.add_argument('--services', nargs='+', help='Specific services for specific_service condition')
+        rule_add_parser.add_argument('--include-details', action='store_true', help='Include scan details in notification')
+        rule_add_parser.add_argument('--no-details', action='store_true', help='Do not include scan details in notification')
+        
+        # Delete notification rule
+        rule_delete_parser = rules_subparsers.add_parser('delete', help='Delete notification rule')
+        rule_delete_parser.add_argument('--name', required=True, help='Rule name')
+        
+        # Enable/disable notification rule
+        rule_toggle_parser = rules_subparsers.add_parser('toggle', help='Enable or disable notification rule')
+        rule_toggle_parser.add_argument('--name', required=True, help='Rule name')
+        rule_toggle_parser.add_argument('--enable', action='store_true', help='Enable the rule')
+        rule_toggle_parser.add_argument('--disable', action='store_true', help='Disable the rule')
+        
+        # Test notification
+        test_parser = notify_subparsers.add_parser('test', help='Test notification system')
+        test_parser.add_argument('--channel', choices=['email', 'slack', 'teams', 'custom'], default='email', help='Channel to test')
+        
         args = parser.parse_args()
         
         if not args.command:
@@ -616,9 +807,8 @@ class GateKeeper:
         return args
 
     def analyze_port_behavior(self, target: Optional[str] = None, max_reports: int = 10, output_path: Optional[str] = None) -> str:
-        """
-        Analyze port behavior over time to detect anomalies.
-        
+        """Analyze port behavior over time to detect anomalies.
+
         Args:
             target: Target host to analyze (None means all targets)
             max_reports: Maximum number of reports to analyze
@@ -668,9 +858,132 @@ class GateKeeper:
             print(f"{Fore.RED}Error analyzing port behavior: {e}{Style.RESET_ALL}")
             return None
 
+    def parse_ports(self, ports_str: str) -> List[int]:
+        """Parse port specification string into a list of port numbers.
+
+        Args:
+            ports_str: Port specification string (e.g., "80,443" or "1-1024")
+            
+        Returns:
+            List of port numbers to scan
+        """
+        if not ports_str:
+            return []
+            
+        ports = []
+        parts = ports_str.split(',')
+        
+        for part in parts:
+            part = part.strip()
+            
+            if '-' in part:
+                # Handle port range
+                try:
+                    start, end = map(int, part.split('-', 1))
+                    
+                    if start < 0 or end > 65535:
+                        self.logger.error(f"Invalid port range: {part} (ports must be 0-65535)")
+                        raise ValueError(f"Invalid port range: {part} (ports must be 0-65535)")
+                        
+                    if start > end:
+                        self.logger.error(f"Invalid port range: {part} (start must be <= end)")
+                        raise ValueError(f"Invalid port range: {part} (start must be <= end)")
+                        
+                    ports.extend(range(start, end + 1))
+                except ValueError as e:
+                    if "Invalid port range" in str(e):
+                        raise
+                    self.logger.error(f"Invalid port range format: {part}")
+                    raise ValueError(f"Invalid port range format: {part}")
+            else:
+                # Handle single port
+                try:
+                    port = int(part)
+                    
+                    if port < 0 or port > 65535:
+                        self.logger.error(f"Invalid port number: {port} (must be 0-65535)")
+                        raise ValueError(f"Invalid port number: {port} (must be 0-65535)")
+                        
+                    ports.append(port)
+                except ValueError:
+                    self.logger.error(f"Invalid port number: {part}")
+                    raise ValueError(f"Invalid port number: {part}")
+        
+        return ports
+
+    async def scan_ports(self) -> List[Dict]:
+        """Scan ports asynchronously and return results."""
+        self.logger.info(f"Starting scan of {len(self.ports)} ports on {self.target}")
+        
+        # Verify DNS resolution
+        if not self.verify_dns(self.target):
+            self.logger.error(f"Unable to resolve target: {self.target}")
+            print(f"{Fore.RED}Error: Unable to resolve target: {self.target}{Style.RESET_ALL}")
+            return []
+        
+        tasks = []
+        results = []
+        semaphore = asyncio.Semaphore(self.threads)
+        
+        async def scan_with_semaphore(port):
+            async with semaphore:
+                return await self.scan_port(port)
+        
+        # Create tasks for all ports
+        tasks = [scan_with_semaphore(port) for port in self.ports]
+        
+        # Progress bar
+        pbar = tqdm(total=len(tasks), desc="Scanning ports", unit="port")
+        
+        # Process results as they complete
+        for future in asyncio.as_completed(tasks):
+            try:
+                result = await future
+                if result:  # Only append open ports
+                    results.append(result)
+                pbar.update(1)
+            except Exception as e:
+                self.logger.error(f"Error during scan: {e}")
+                pbar.update(1)
+        
+        pbar.close()
+        
+        # Sort results by port number
+        results.sort(key=lambda x: x['port'])
+        
+        self.logger.info(f"Scan completed. Found {len(results)} open ports.")
+        return results
+    
+    def scan(self) -> List[Dict]:
+        """Run port scan on the current target.
+
+        Returns:
+            List of scan results (dictionaries with port information)
+        """
+        try:
+            # Setup and run the asyncio event loop
+            if sys.platform.startswith('win'):
+                asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+            
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            # Run the scan
+            results = loop.run_until_complete(self.scan_ports())
+            
+            # Clean up
+            loop.close()
+            
+            return results
+            
+        except Exception as e:
+            self.logger.error(f"Scan failed: {e}")
+            print(f"{Fore.RED}Scan failed: {e}{Style.RESET_ALL}")
+            return []
+
     def main(self):
         """Main function to handle the command-line interface."""
-        args = parse_arguments()
+        args = self.parse_arguments()
         
         # Display banner
         display_banner()
@@ -724,7 +1037,7 @@ class GateKeeper:
                 else:
                     print(f"{Fore.RED}Error: Policy '{args.policy}' not found{Style.RESET_ALL}")
                     sys.exit(1)
-            
+
             # Set scan parameters
             gatekeeper.target = target
             gatekeeper.ports = ports
@@ -733,20 +1046,45 @@ class GateKeeper:
             gatekeeper.rate_limit = args.rate_limit
             
             # Run the scan
-            start_time = time.time()
+            gatekeeper.start_time = time.time()
             
             display_scan_start(target, len(ports))
             results = gatekeeper.scan()
             
             end_time = time.time()
-            scan_time = end_time - start_time
+            scan_time = end_time - gatekeeper.start_time
             
             display_scan_complete(len(results), scan_time)
             
             # Save the results if an output file is specified
             if args.output:
-                gatekeeper.save_results(results, args.output, args.format, args.encrypt)
+                gatekeeper.save_results(results, args.output, args.format, args.encrypt, args.notify)
+            else:
+                # Save with default settings
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                filename = f"reports/gatekeeper_scan_{timestamp}"
+                gatekeeper.save_results(results, filename, args.encrypt, args.format, args.notify)
             
+            # Process notifications if requested
+            if args.notify:
+                try:
+                    # Create notification data
+                    notification_data = {
+                        "scan_info": {
+                            "target": target,
+                            "timestamp": datetime.now().isoformat(),
+                            "open_ports_found": len(results),
+                            "scan_duration": scan_time
+                        },
+                        "results": results
+                    }
+                    
+                    # Process notifications
+                    gatekeeper.process_notifications(notification_data)
+                    
+                except Exception as e:
+                    print(f"{Fore.RED}Error processing notifications: {str(e)}{Style.RESET_ALL}")
+        
         elif args.command == 'reports':
             # List available reports
             reports = find_latest_reports()
@@ -781,6 +1119,36 @@ class GateKeeper:
             
             if args.output:
                 comparer.save_diff(diff, args.output)
+                
+            # Process notifications if requested
+            if args.notify:
+                try:
+                    # Load report data
+                    with open(args.report1, 'r') as f:
+                        report1_data = json.load(f)
+                    with open(args.report2, 'r') as f:
+                        report2_data = json.load(f)
+                    
+                    # Create combined data for notification
+                    notification_data = {
+                        "scan_info": {
+                            "target": report1_data.get('scan_info', {}).get('target', 'Unknown'),
+                            "timestamp": datetime.now().isoformat(),
+                            "comparison": True,
+                            "report1": os.path.basename(args.report1),
+                            "report2": os.path.basename(args.report2),
+                            "new_ports": len(diff.get('new_ports', [])),
+                            "closed_ports": len(diff.get('closed_ports', [])),
+                            "changed_services": len(diff.get('changed_services', []))
+                        },
+                        "results": diff.get('new_ports', [])
+                    }
+                    
+                    # Process notifications
+                    gatekeeper.process_notifications(notification_data)
+                    
+                except Exception as e:
+                    print(f"{Fore.RED}Error processing notifications for comparison: {str(e)}{Style.RESET_ALL}")
         
         elif args.command == 'behavior':
             # Analyze port behavior across multiple scans
@@ -791,6 +1159,37 @@ class GateKeeper:
             
             if args.output:
                 analyzer.save_results(results, args.output)
+                
+            # Process notifications if requested
+            if args.notify and results:
+                try:
+                    # Create notification data
+                    notification_data = {
+                        "scan_info": {
+                            "target": args.target or "All Targets",
+                            "timestamp": datetime.now().isoformat(),
+                            "behavior_analysis": True,
+                            "anomalies_found": sum(len(target_results.get('anomalies', [])) for target_results in results.values())
+                        },
+                        "results": []
+                    }
+                    
+                    # Add anomalies as 'ports'
+                    for target, target_results in results.items():
+                        for anomaly in target_results.get('anomalies', []):
+                            notification_data['results'].append({
+                                'port': anomaly.get('port', 0),
+                                'service': anomaly.get('service', 'Unknown'),
+                                'state': 'anomaly',
+                                'type': anomaly.get('type', 'Unknown'),
+                                'severity': anomaly.get('severity', 'low')
+                            })
+                    
+                    # Process notifications
+                    gatekeeper.process_notifications(notification_data)
+                    
+                except Exception as e:
+                    print(f"{Fore.RED}Error processing notifications for behavior analysis: {str(e)}{Style.RESET_ALL}")
         
         elif args.command == 'policies':
             # List available scan policies
@@ -898,120 +1297,55 @@ class GateKeeper:
             except Exception as e:
                 print(f"{Fore.RED}Error during export: {str(e)}{Style.RESET_ALL}")
                 sys.exit(1)
-
-    def setup_argparse(self):
-        """Set up command-line argument parsing."""
-        parser = argparse.ArgumentParser(
-            description="GateKeeper Network Scanner",
-            epilog="A security tool for scanning networks and detecting changes"
-        )
         
-        subparsers = parser.add_subparsers(dest="command", help="Command to execute")
-        
-        # Scan command
-        scan_parser = subparsers.add_parser("scan", help="Scan targets for open ports")
-        scan_parser.add_argument("-t", "--target", help="Target host(s) to scan (comma-separated)")
-        scan_parser.add_argument("-f", "--target-file", help="File containing target hosts (one per line)")
-        scan_parser.add_argument("-g", "--group", help="Target group to scan")
-        scan_parser.add_argument("-p", "--ports", help="Port(s) to scan (e.g., '80,443' or '1-1024')")
-        scan_parser.add_argument("--threads", type=int, default=100, help="Number of threads to use")
-        scan_parser.add_argument("--timeout", type=float, default=1.0, help="Connection timeout in seconds")
-        scan_parser.add_argument("--rate-limit", type=float, default=0.1, help="Rate limiting between connection attempts")
-        scan_parser.add_argument("--no-vuln-check", action="store_true", help="Skip vulnerability checking")
-        scan_parser.add_argument("--output", "-o", help="Output file for scan results")
-        scan_parser.add_argument("--format", default="json", choices=["json", "csv", "html", "all"], help="Output format")
-        scan_parser.add_argument("--encrypt", action="store_true", help="Encrypt scan results")
-        scan_parser.add_argument("--verbose", "-v", action="store_true", help="Show verbose output")
-        scan_parser.add_argument("--profile", help="Load settings from a saved profile")
-        scan_parser.add_argument("--save-profile", help="Save current settings to a profile")
-        scan_parser.add_argument("--policy", help="Use a saved scan policy")
-        scan_parser.add_argument("--list-policies", action="store_true", help="List available scan policies")
-        scan_parser.add_argument("--list-groups", action="store_true", help="List available target groups")
-
-    def get_targets(self, args):
-        """
-        Get a list of targets from command-line arguments, file, or target group.
-        
-        Args:
-            args: Command-line arguments
+        elif args.command == 'notifications':
+            # Import the notifications module here to avoid circular imports
+            from utils.notifications import get_notification_manager, NotificationManager
+            from utils.cli_notifications import (
+                config_email, config_webhook, rule_add, rule_list, 
+                rule_delete, rule_toggle, test_notification, show_config
+            )
             
-        Returns:
-            list: List of targets to scan
-        """
-        targets = []
-        
-        # Get targets from command line
-        if args.target:
-            targets.extend([t.strip() for t in args.target.split(',') if t.strip()])
-        
-        # Get targets from file
-        if hasattr(args, 'target_file') and args.target_file:
-            try:
-                target_file = Path(args.target_file)
-                if target_file.exists():
-                    with open(target_file, 'r') as f:
-                        file_targets = [line.strip() for line in f if line.strip() and not line.startswith('#')]
-                        targets.extend(file_targets)
-                        self.logger.info(f"Loaded {len(file_targets)} targets from {args.target_file}")
-                else:
-                    self.logger.error(f"Target file {args.target_file} not found")
-                    print(f"{Fore.RED}Error: Target file {args.target_file} not found{Style.RESET_ALL}")
-            except Exception as e:
-                self.logger.error(f"Failed to read target file {args.target_file}: {e}")
-                print(f"{Fore.RED}Error reading target file: {str(e)}{Style.RESET_ALL}")
-        
-        # Get targets from group
-        if hasattr(args, 'group') and args.group:
-            try:
-                from utils.target_groups import get_target_groups
-                groups_manager = get_target_groups()
-                group_targets = groups_manager.get_targets(args.group)
+            # Get notification manager
+            notification_manager = get_notification_manager()
+            
+            if not hasattr(args, 'notify_command') or not args.notify_command:
+                print(f"{Fore.YELLOW}Please specify a notifications command.{Style.RESET_ALL}")
+                return
                 
-                if group_targets:
-                    targets.extend(group_targets)
-                    self.logger.info(f"Loaded {len(group_targets)} targets from group {args.group}")
-                    print(f"{Fore.CYAN}Loaded {len(group_targets)} targets from group '{args.group}'{Style.RESET_ALL}")
+            # Handle notification commands
+            if args.notify_command == 'show-config':
+                show_config(notification_manager)
+                
+            elif args.notify_command == 'config-email':
+                config_email(args, notification_manager)
+                
+            elif args.notify_command == 'config-webhook':
+                config_webhook(args, notification_manager)
+                
+            elif args.notify_command == 'test':
+                test_notification(args, notification_manager)
+                
+            elif args.notify_command == 'rules':
+                if not hasattr(args, 'rules_command') or not args.rules_command:
+                    print(f"{Fore.YELLOW}Please specify a rules command.{Style.RESET_ALL}")
+                    return
+                    
+                # Handle rules commands
+                if args.rules_command == 'list':
+                    rule_list(notification_manager)
+                    
+                elif args.rules_command == 'add':
+                    rule_add(args, notification_manager)
+                    
+                elif args.rules_command == 'delete':
+                    rule_delete(args, notification_manager)
+                    
+                elif args.rules_command == 'toggle':
+                    rule_toggle(args, notification_manager)
+                    
                 else:
-                    self.logger.warning(f"No targets found in group {args.group}")
-                    print(f"{Fore.YELLOW}Warning: No targets found in group '{args.group}'{Style.RESET_ALL}")
-            except Exception as e:
-                self.logger.error(f"Failed to get targets from group {args.group}: {e}")
-                print(f"{Fore.RED}Error getting targets from group: {str(e)}{Style.RESET_ALL}")
-        
-        # Remove duplicates while preserving order
-        unique_targets = []
-        for target in targets:
-            if target not in unique_targets:
-                unique_targets.append(target)
-        
-        return unique_targets
-
-    def scan_targets(self, args):
-        """Scan targets for open ports and services."""
-        # If listing policies was requested, show them and exit
-        if args.list_policies:
-            from utils.scan_policy import get_policy_manager
-            policy_manager = get_policy_manager()
-            policy_manager.print_policies()
-            return
-        
-        # If listing groups was requested, show them and exit
-        if args.list_groups:
-            from utils.target_groups import get_target_groups
-            groups_manager = get_target_groups()
-            groups_manager.print_groups()
-            return
-        
-        # If a policy was specified, apply it to the arguments
-        if args.policy:
-            from utils.scan_policy import get_policy_manager
-            policy_manager = get_policy_manager()
-            args = policy_manager.apply_policy_to_args(args.policy, args)
-        
-        # Ensure we have targets to scan
-        targets = self.get_targets(args)
-        if not targets:
-            print(f"{Fore.RED}Error: No targets specified. Use -t/--target, -f/--target-file, or -g/--group{Style.RESET_ALL}")
-            return
-
-        # ... rest of the function remains unchanged ...
+                    print(f"{Fore.RED}Unknown rules command: {args.rules_command}{Style.RESET_ALL}")
+            
+            else:
+                print(f"{Fore.RED}Unknown notifications command: {args.notify_command}{Style.RESET_ALL}")
