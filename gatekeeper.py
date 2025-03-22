@@ -49,6 +49,26 @@ class GateKeeper:
         self.max_scan_rate = 1000  # maximum ports per second
         self.encryption_key = self._generate_encryption_key()
         self.reports_dir = Path('reports')
+        # Define common ports as a class attribute to avoid duplication
+        self.common_ports = {
+            21: "FTP",
+            22: "SSH",
+            23: "Telnet",
+            25: "SMTP",
+            53: "DNS",
+            80: "HTTP",
+            110: "POP3",
+            143: "IMAP",
+            443: "HTTPS",
+            465: "SMTPS",
+            587: "SMTP",
+            993: "IMAPS",
+            995: "POP3S",
+            3306: "MySQL",
+            3389: "RDP",
+            5432: "PostgreSQL",
+            8080: "HTTP-Proxy"
+        }
         
     def _generate_encryption_key(self) -> bytes:
         """Generate encryption key for results."""
@@ -258,51 +278,13 @@ class GateKeeper:
             
             # If no specific service detected, use port number as a hint
             if service_info["name"] == "Unknown":
-                common_ports = {
-                    21: "FTP",
-                    22: "SSH",
-                    23: "Telnet",
-                    25: "SMTP",
-                    53: "DNS",
-                    80: "HTTP",
-                    110: "POP3",
-                    143: "IMAP",
-                    443: "HTTPS",
-                    465: "SMTPS",
-                    587: "SMTP",
-                    993: "IMAPS",
-                    995: "POP3S",
-                    3306: "MySQL",
-                    3389: "RDP",
-                    5432: "PostgreSQL",
-                    8080: "HTTP-Proxy"
-                }
-                service_info["name"] = common_ports.get(port, f"Unknown-{port}")
+                service_info["name"] = self.common_ports.get(port, f"Unknown-{port}")
             
             return service_info
         
         except asyncio.TimeoutError:
             # Connection timed out, but port is open
-            common_ports = {
-                21: "FTP",
-                22: "SSH",
-                23: "Telnet",
-                25: "SMTP",
-                53: "DNS",
-                80: "HTTP",
-                110: "POP3",
-                143: "IMAP",
-                443: "HTTPS",
-                465: "SMTPS",
-                587: "SMTP",
-                993: "IMAPS",
-                995: "POP3S",
-                3306: "MySQL",
-                3389: "RDP",
-                5432: "PostgreSQL",
-                8080: "HTTP-Proxy"
-            }
-            return {"name": common_ports.get(port, f"Unknown-{port}"), "version": ""}
+            return {"name": self.common_ports.get(port, f"Unknown-{port}"), "version": ""}
         
         except Exception as e:
             self.logger.error(f"Service identification failed for port {port}: {e}")
