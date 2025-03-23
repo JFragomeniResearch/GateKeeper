@@ -893,6 +893,20 @@ class GateKeeper:
         
         return ports
 
+    async def _scan_with_semaphore(self, port: int, semaphore: asyncio.Semaphore) -> Optional[Dict]:
+        """
+        Scan a port with a semaphore to limit concurrency.
+        
+        Args:
+            port: Port number to scan
+            semaphore: Semaphore to control concurrency
+            
+        Returns:
+            Dict with port info if open, None otherwise
+        """
+        async with semaphore:
+            return await self.scan_port(port)
+
     async def scan_ports(self) -> List[Dict]:
         """Scan ports asynchronously and return results."""
         self.logger.info(f"Starting scan of {len(self.ports)} ports on {self.target}")
@@ -903,16 +917,11 @@ class GateKeeper:
             print(f"{Fore.RED}Error: Unable to resolve target: {self.target}{Style.RESET_ALL}")
             return []
         
-        tasks = []
         results = []
         semaphore = asyncio.Semaphore(self.threads)
         
-        async def scan_with_semaphore(port):
-            async with semaphore:
-                return await self.scan_port(port)
-        
         # Create tasks for all ports
-        tasks = [scan_with_semaphore(port) for port in self.ports]
+        tasks = [self._scan_with_semaphore(port, semaphore) for port in self.ports]
         
         # Progress bar
         pbar = tqdm(total=len(tasks), desc="Scanning ports", unit="port")
