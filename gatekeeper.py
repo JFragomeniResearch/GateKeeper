@@ -612,6 +612,42 @@ class GateKeeper:
                 port_list.append(int(part))
         return sorted(set(port_list))
 
+    def _load_scan_policy(self, policy_name: str) -> None:
+        """
+        Load and apply scan policy configuration.
+        
+        Args:
+            policy_name: Name of the policy to load
+        """
+        if policy_name:
+            policy_manager = get_policy_manager()
+            policy_config = policy_manager.load_policy(policy_name)
+            if policy_config:
+                self.threads = policy_config.get('threads', self.threads)
+                self.timeout = policy_config.get('timeout', self.timeout)
+                self.rate_limit = policy_config.get('rate_limit', self.rate_limit)
+                self.max_scan_rate = policy_config.get('max_scan_rate', self.max_scan_rate)
+
+    def _load_target_group(self, group_name: str) -> Tuple[str, List[int]]:
+        """
+        Load target group configuration.
+        
+        Args:
+            group_name: Name of the target group to load
+            
+        Returns:
+            Tuple[str, List[int]]: Target and ports from group config
+        """
+        if group_name:
+            target_groups = get_target_groups()
+            group_config = target_groups.load_group(group_name)
+            if group_config:
+                return (
+                    group_config.get('target', self.target),
+                    group_config.get('ports', self.ports)
+                )
+        return self.target, self.ports
+
     def scan(self, target: str, ports: List[int], policy: str = None, group: str = None, notify: bool = False) -> None:
         """
         Run a network scan on the specified target and ports.
@@ -626,23 +662,9 @@ class GateKeeper:
         self.target = target
         self.ports = ports
         
-        # Load scan policy if provided
-        if policy:
-            policy_manager = get_policy_manager()
-            policy_config = policy_manager.load_policy(policy)
-            if policy_config:
-                self.threads = policy_config.get('threads', self.threads)
-                self.timeout = policy_config.get('timeout', self.timeout)
-                self.rate_limit = policy_config.get('rate_limit', self.rate_limit)
-                self.max_scan_rate = policy_config.get('max_scan_rate', self.max_scan_rate)
-        
-        # Load target group if provided
-        if group:
-            target_groups = get_target_groups()
-            group_config = target_groups.load_group(group)
-            if group_config:
-                self.target = group_config.get('target', self.target)
-                self.ports = group_config.get('ports', self.ports)
+        # Load scan policy and target group configurations
+        self._load_scan_policy(policy)
+        self.target, self.ports = self._load_target_group(group)
         
         # Verify DNS resolution
         if not self.verify_dns(self.target):
