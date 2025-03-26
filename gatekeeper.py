@@ -142,13 +142,57 @@ class GateKeeper:
         return logger
 
     def verify_dns(self, target: str) -> bool:
-        """Verify DNS resolution for target."""
+        """
+        Verify DNS resolution for target with enhanced error handling.
+        
+        Args:
+            target: Target hostname or IP address
+            
+        Returns:
+            bool: True if DNS resolution succeeds, False otherwise
+        """
+        # Check if target is already an IP address
         try:
-            socket.gethostbyname(target)
+            ipaddress.ip_address(target)
+            self.logger.info(f"Target {target} is already an IP address, skipping DNS resolution")
+            return True
+        except ValueError:
+            # Not an IP address, proceed with DNS resolution
+            pass
+            
+        try:
+            # First try simple hostname resolution
+            ip_address = socket.gethostbyname(target)
+            self.logger.info(f"DNS resolution successful for {target}: {ip_address}")
             return True
         except socket.gaierror as e:
-            self.logger.error(f"DNS verification failed for {target}: {e}")
-            return False  # Return False instead of raising exception
+            # More detailed error handling based on error code
+            if e.errno == socket.EAI_NONAME:
+                self.logger.error(f"DNS resolution failed for {target}: Host not found")
+            elif e.errno == socket.EAI_AGAIN:
+                self.logger.error(f"DNS resolution failed for {target}: Temporary DNS server failure")
+            elif e.errno == socket.EAI_FAIL:
+                self.logger.error(f"DNS resolution failed for {target}: Non-recoverable DNS server failure")
+            else:
+                self.logger.error(f"DNS resolution failed for {target}: {e}")
+            
+            # Try alternative DNS lookup with dnspython as fallback
+            try:
+                resolver = dns.resolver.Resolver()
+                resolver.timeout = 2.0
+                resolver.lifetime = 4.0
+                answers = resolver.resolve(target, 'A')
+                if answers:
+                    ip_address = answers[0].address
+                    self.logger.info(f"Alternative DNS resolution successful for {target}: {ip_address}")
+                    return True
+            except Exception as dns_error:
+                self.logger.error(f"Alternative DNS resolution also failed: {dns_error}")
+            
+            return False
+        except Exception as e:
+            self.logger.error(f"Unexpected error during DNS verification for {target}: {e}")
+            return False
 
     async def scan_port(self, port: int) -> Optional[Dict]:
         """Scan a single port with rate limiting and timeout"""
