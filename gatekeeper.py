@@ -195,40 +195,75 @@ class GateKeeper:
             return False
 
     async def scan_port(self, port: int) -> Optional[Dict]:
-        """Scan a single port with rate limiting and timeout"""
+        """
+        Scan a single port with rate limiting and timeout.
+        
+        Args:
+            port: Port number to scan
+            
+        Returns:
+            Optional[Dict]: Scan result if the port is open, None otherwise
+        """
         if not 0 <= port <= 65535:
             raise ValueError(f"Port number must be between 0 and 65535, got {port}")
         
+        # Use asyncio.sleep instead of time.sleep for rate limiting in async functions
+        await asyncio.sleep(self.rate_limit)
+        
+        # Create a socket for connection testing
+        sock = None
         try:
-            # Implement rate limiting
-            time.sleep(self.rate_limit)
-            
+            # Use low-level socket creation to control timing and options
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(self.timeout)
             
+            # Attempt connection
             result = sock.connect_ex((self.target, port))
             
             if result == 0:
-                service = await self._identify_service(port)
-                self.logger.info(f"Port {port} is open ({service})")
+                # Connection successful - port is open
+                service_info = await self._identify_service(port)
+                self.logger.info(f"Port {port} is open ({service_info['name']})")
+                
                 return {
                     'port': port,
                     'status': 'open',
-                    'service': service,
+                    'service': service_info['name'],
+                    'version': service_info['version'],
                     'timestamp': datetime.now().isoformat()
                 }
             
-            sock.close()
-            return None
+            return None  # Port is closed or filtered
             
-        except Exception as e:
-            self.logger.error(f"Error scanning port {port}: {str(e)}")
+        except socket.timeout:
+            self.logger.debug(f"Connection to port {port} timed out")
             return None
+        except ConnectionRefusedError:
+            self.logger.debug(f"Connection to port {port} refused")
+            return None
+        except (socket.gaierror, socket.error) as e:
+            self.logger.error(f"Socket error scanning port {port}: {e}")
+            return None
+        except Exception as e:
+            self.logger.error(f"Unexpected error scanning port {port}: {e}")
+            return None
+        finally:
+            # Ensure socket is closed in all cases
+            if sock:
+                try:
+                    sock.close()
+                except Exception:
+                    pass
 
-    async def _identify_service(self, port: int) -> Optional[str]:
+    async def _identify_service(self, port: int) -> Dict[str, str]:
         """
         Identify the service running on a specific port.
-        Returns the service name and version if detected.
+        
+        Args:
+            port: Port number to identify the service for
+            
+        Returns:
+            Dict[str, str]: Dictionary containing service name and version
         """
         try:
             reader, writer = await asyncio.open_connection(
