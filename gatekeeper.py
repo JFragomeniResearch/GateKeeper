@@ -681,14 +681,54 @@ class GateKeeper:
             
         Returns:
             List[int]: List of unique port numbers
+            
+        Raises:
+            ValueError: If the port specification is invalid
         """
         port_list = []
+        
+        if not ports or not ports.strip():
+            raise ValueError("Port specification cannot be empty")
+            
         for part in ports.split(','):
-            if '-' in part:
-                start, end = map(int, part.split('-'))
-                port_list.extend(range(start, end + 1))
-            else:
-                port_list.append(int(part))
+            part = part.strip()
+            if not part:
+                continue
+                
+            try:
+                if '-' in part:
+                    # Handle port range
+                    start_str, end_str = part.split('-', 1)
+                    start, end = int(start_str.strip()), int(end_str.strip())
+                    
+                    # Validate port range
+                    if start < 0 or end < 0:
+                        raise ValueError(f"Port numbers cannot be negative: {part}")
+                    if start > 65535 or end > 65535:
+                        raise ValueError(f"Port numbers must be between 0 and 65535: {part}")
+                    if start > end:
+                        raise ValueError(f"Invalid port range (start > end): {part}")
+                        
+                    port_list.extend(range(start, end + 1))
+                else:
+                    # Handle single port
+                    port = int(part)
+                    if port < 0:
+                        raise ValueError(f"Port number cannot be negative: {port}")
+                    if port > 65535:
+                        raise ValueError(f"Port number must be between 0 and 65535: {port}")
+                        
+                    port_list.append(port)
+            except ValueError as e:
+                # Check if this is our custom error message
+                if str(e).startswith("Port "):
+                    raise
+                # Otherwise, it's likely a conversion error
+                raise ValueError(f"Invalid port specification: {part}")
+                
+        if not port_list:
+            raise ValueError("No valid ports specified")
+            
         return sorted(set(port_list))
 
     def _load_scan_policy(self, policy_name: str) -> None:
