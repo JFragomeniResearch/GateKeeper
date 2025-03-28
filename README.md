@@ -35,6 +35,11 @@ This tool is intended for authorized use only. Users must ensure they have expli
   - schedule (for scheduled scanning)
   - requests (for webhook notifications)
 
+## Author
+Joseph Fragomeni
+
+Application created using Cursor.ai for applied/educational purposes.
+
 ## Installation
 
 1. Clone the repository (bash)
@@ -226,11 +231,6 @@ python analyze_port_behavior.py --list
 Scan results are saved in the `reports/` directory.
 Comparison reports are saved in the `reports/comparisons/` directory.
 Behavior analysis reports are saved in the `reports/behavior/` directory.
-
-## Author
-Joseph Fragomeni
-
-Application created for applied/educational purposes.
 
 ## Export Functionality
 The new export feature allows you to export scan results to different formats for easier data analysis and reporting.
