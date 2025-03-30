@@ -237,16 +237,12 @@ class GateKeeper:
             
         except socket.timeout:
             self.logger.debug(f"Connection to port {port} timed out")
-            return None
         except ConnectionRefusedError:
             self.logger.debug(f"Connection to port {port} refused")
-            return None
         except (socket.gaierror, socket.error) as e:
             self.logger.error(f"Socket error scanning port {port}: {e}")
-            return None
         except Exception as e:
             self.logger.error(f"Unexpected error scanning port {port}: {e}")
-            return None
         finally:
             # Ensure socket is closed in all cases
             if sock:
@@ -254,6 +250,8 @@ class GateKeeper:
                     sock.close()
                 except Exception:
                     pass
+        
+        return None  # Return None for all error cases
 
     async def _identify_service(self, port: int) -> Dict[str, str]:
         """
@@ -265,109 +263,112 @@ class GateKeeper:
         Returns:
             Dict[str, str]: Dictionary containing service name and version
         """
+        # Default service info if we can't identify it
+        service_info = {"name": self.common_ports.get(port, f"Unknown-{port}"), "version": ""}
+        
         try:
             reader, writer = await asyncio.open_connection(
                 self.target, port, timeout=self.timeout
             )
             
-            # Send appropriate probes based on common port numbers
-            probe_data = b""
-            if port == 80 or port == 443 or port == 8080:
+            # Determine appropriate probe based on port
+            probe_data = None
+            if port in [80, 443, 8080]:
                 # HTTP probe
-                probe_data = b"GET / HTTP/1.1\r\nHost: " + self.target.encode() + b"\r\n\r\n"
-            elif port == 21:
-                # FTP probe - just connect, no need to send data
-                pass
-            elif port == 22:
-                # SSH probe - just connect, no need to send data
-                pass
-            elif port == 25 or port == 587:
+                probe_data = f"GET / HTTP/1.1\r\nHost: {self.target}\r\n\r\n".encode()
+            elif port in [25, 587]:
                 # SMTP probe
                 probe_data = b"EHLO gatekeeper.scan\r\n"
-            elif port == 110:
-                # POP3 probe
-                pass
-            elif port == 143:
-                # IMAP probe
-                pass
-            elif port == 3306:
-                # MySQL probe
-                pass
             
-            # Send probe if we have one
+            # Send probe if available
             if probe_data:
                 writer.write(probe_data)
                 await writer.drain()
             
             # Read response with timeout
-            response = await asyncio.wait_for(reader.read(1024), timeout=self.timeout)
-            
+            try:
+                response = await asyncio.wait_for(reader.read(1024), timeout=self.timeout)
+                
+                # Decode response if possible
+                response_str = response.decode('utf-8', errors='ignore')
+                
+                # Use a dictionary to map service detection patterns to handler functions
+                service_detectors = {
+                    (b"HTTP/" in response): 
+                        lambda: self._extract_http_info(response_str),
+                    (b"SSH-" in response): 
+                        lambda: self._extract_ssh_info(response_str),
+                    (b"FTP" in response or (b"220" in response and (b"ftp" in response.lower() or port == 21))): 
+                        lambda: self._extract_ftp_info(response_str),
+                    (b"SMTP" in response or (b"220" in response and b"mail" in response.lower())): 
+                        lambda: self._extract_smtp_info(response_str),
+                    (b"mysql" in response.lower() or port == 3306): 
+                        lambda: self._extract_mysql_info(response_str)
+                }
+                
+                # Apply the first matching detector
+                for condition, handler in service_detectors.items():
+                    if condition:
+                        service_info = handler()
+                        break
+                
+            except asyncio.TimeoutError:
+                # Timeout reading response, but connection was established
+                pass
+                
             # Close the connection
             writer.close()
             await writer.wait_closed()
             
-            # Decode response if possible
-            try:
-                response_str = response.decode('utf-8', errors='ignore')
-            except:
-                response_str = str(response)
-            
-            # Identify service and version based on response
-            service_info = {"name": "Unknown", "version": ""}
-            
-            # HTTP detection
-            if b"HTTP/" in response:
-                service_info["name"] = "HTTP"
-                # Try to extract server info
-                server_match = re.search(r"Server: ([^\r\n]+)", response_str)
-                if server_match:
-                    service_info["version"] = server_match.group(1)
-            
-            # SSH detection
-            elif b"SSH-" in response:
-                service_info["name"] = "SSH"
-                # Extract SSH version
-                ssh_match = re.search(r"SSH-\d+\.\d+-([^\r\n]+)", response_str)
-                if ssh_match:
-                    service_info["version"] = ssh_match.group(1)
-            
-            # FTP detection
-            elif b"FTP" in response or b"220" in response and (b"ftp" in response.lower() or port == 21):
-                service_info["name"] = "FTP"
-                # Extract FTP server version
-                ftp_match = re.search(r"220[- ]([^\r\n]+)", response_str)
-                if ftp_match:
-                    service_info["version"] = ftp_match.group(1)
-            
-            # SMTP detection
-            elif b"SMTP" in response or b"220" in response and b"mail" in response.lower():
-                service_info["name"] = "SMTP"
-                # Extract SMTP server version
-                smtp_match = re.search(r"220[- ]([^\r\n]+)", response_str)
-                if smtp_match:
-                    service_info["version"] = smtp_match.group(1)
-            
-            # MySQL detection
-            elif b"mysql" in response.lower() or port == 3306:
-                service_info["name"] = "MySQL"
-                # Extract MySQL version if possible
-                mysql_match = re.search(r"([0-9]+\.[0-9]+\.[0-9]+)", response_str)
-                if mysql_match:
-                    service_info["version"] = mysql_match.group(1)
-            
-            # If no specific service detected, use port number as a hint
-            if service_info["name"] == "Unknown":
-                service_info["name"] = self.common_ports.get(port, f"Unknown-{port}")
-            
             return service_info
-        
+            
         except asyncio.TimeoutError:
-            # Connection timed out, but port is open
-            return {"name": self.common_ports.get(port, f"Unknown-{port}"), "version": ""}
+            # Connection timed out
+            return service_info
         
         except Exception as e:
             self.logger.error(f"Service identification failed for port {port}: {e}")
-            return {"name": f"Unknown-{port}", "version": ""}
+            return service_info
+            
+    def _extract_http_info(self, response_str: str) -> Dict[str, str]:
+        """Extract HTTP server information from response."""
+        server_match = re.search(r"Server: ([^\r\n]+)", response_str)
+        return {
+            "name": "HTTP",
+            "version": server_match.group(1) if server_match else ""
+        }
+        
+    def _extract_ssh_info(self, response_str: str) -> Dict[str, str]:
+        """Extract SSH server information from response."""
+        ssh_match = re.search(r"SSH-\d+\.\d+-([^\r\n]+)", response_str)
+        return {
+            "name": "SSH",
+            "version": ssh_match.group(1) if ssh_match else ""
+        }
+        
+    def _extract_ftp_info(self, response_str: str) -> Dict[str, str]:
+        """Extract FTP server information from response."""
+        ftp_match = re.search(r"220[- ]([^\r\n]+)", response_str)
+        return {
+            "name": "FTP",
+            "version": ftp_match.group(1) if ftp_match else ""
+        }
+        
+    def _extract_smtp_info(self, response_str: str) -> Dict[str, str]:
+        """Extract SMTP server information from response."""
+        smtp_match = re.search(r"220[- ]([^\r\n]+)", response_str)
+        return {
+            "name": "SMTP",
+            "version": smtp_match.group(1) if smtp_match else ""
+        }
+        
+    def _extract_mysql_info(self, response_str: str) -> Dict[str, str]:
+        """Extract MySQL server information from response."""
+        mysql_match = re.search(r"([0-9]+\.[0-9]+\.[0-9]+)", response_str)
+        return {
+            "name": "MySQL",
+            "version": mysql_match.group(1) if mysql_match else ""
+        }
 
     def encrypt_results(self, results: List[Dict]) -> bytes:
         """Encrypt scan results"""
