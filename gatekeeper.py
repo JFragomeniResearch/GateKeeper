@@ -627,7 +627,7 @@ class GateKeeper:
 
     async def scan_ports(self, ports: List[int]) -> List[Dict]:
         """
-        Scan a list of ports using asyncio and rate limiting.
+        Scan a list of ports using asyncio and rate limiting with progress tracking.
         
         Args:
             ports: List of port numbers to scan
@@ -635,10 +635,46 @@ class GateKeeper:
         Returns:
             List[Dict]: List of scan results
         """
+        if not ports:
+            self.logger.warning("No ports to scan")
+            return []
+            
+        # Setup semaphore for concurrency control
         semaphore = asyncio.Semaphore(self.threads)
-        tasks = [self._scan_with_semaphore(semaphore, port) for port in ports]
-        results = await asyncio.gather(*tasks)
-        return [result for result in results if result is not None]
+        
+        # Setup progress display
+        total_ports = len(ports)
+        self.logger.info(f"Starting scan of {total_ports} ports with {self.threads} concurrent threads")
+        
+        # Create progress bar
+        progress = tqdm(total=total_ports, desc="Scanning ports", unit="port")
+        
+        # Results collection
+        results = []
+        
+        # Process ports in chunks to update progress bar
+        chunk_size = min(500, total_ports)  # Process in reasonable chunks
+        for i in range(0, total_ports, chunk_size):
+            chunk = ports[i:i + chunk_size]
+            
+            # Create tasks for this chunk
+            tasks = [self._scan_with_semaphore(semaphore, port) for port in chunk]
+            
+            # Process tasks concurrently
+            chunk_results = await asyncio.gather(*tasks)
+            
+            # Filter valid results and add to results list
+            valid_results = [result for result in chunk_results if result is not None]
+            results.extend(valid_results)
+            
+            # Update progress bar
+            progress.update(len(chunk))
+            
+        # Close progress bar
+        progress.close()
+        
+        self.logger.info(f"Scan completed: {len(results)} open ports found out of {total_ports} ports scanned")
+        return results
 
     def compare_reports(self, report1: str, report2: str) -> None:
         """
@@ -673,6 +709,22 @@ class GateKeeper:
         analyzer = PortBehaviorAnalyzer(report_path)
         analyzer.analyze_port_behavior()
 
+    def _validate_port(self, port: int, context: str = None) -> None:
+        """
+        Validate that a port number is within the valid range (0-65535).
+        
+        Args:
+            port: The port number to validate
+            context: Optional context for error message
+            
+        Raises:
+            ValueError: If the port number is invalid
+        """
+        if port < 0:
+            raise ValueError(f"Port number cannot be negative: {context or port}")
+        if port > 65535:
+            raise ValueError(f"Port number must be between 0 and 65535: {context or port}")
+
     def parse_ports(self, ports: str) -> List[int]:
         """
         Parse a string of port numbers and ranges into a list of integers.
@@ -703,10 +755,9 @@ class GateKeeper:
                     start, end = int(start_str.strip()), int(end_str.strip())
                     
                     # Validate port range
-                    if start < 0 or end < 0:
-                        raise ValueError(f"Port numbers cannot be negative: {part}")
-                    if start > 65535 or end > 65535:
-                        raise ValueError(f"Port numbers must be between 0 and 65535: {part}")
+                    self._validate_port(start, part)
+                    self._validate_port(end, part)
+                    
                     if start > end:
                         raise ValueError(f"Invalid port range (start > end): {part}")
                         
@@ -714,15 +765,11 @@ class GateKeeper:
                 else:
                     # Handle single port
                     port = int(part)
-                    if port < 0:
-                        raise ValueError(f"Port number cannot be negative: {port}")
-                    if port > 65535:
-                        raise ValueError(f"Port number must be between 0 and 65535: {port}")
-                        
+                    self._validate_port(port)
                     port_list.append(port)
             except ValueError as e:
                 # Check if this is our custom error message
-                if str(e).startswith("Port "):
+                if str(e).startswith("Port ") or str(e).startswith("Invalid port"):
                     raise
                 # Otherwise, it's likely a conversion error
                 raise ValueError(f"Invalid port specification: {part}")
