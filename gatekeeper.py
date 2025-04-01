@@ -406,100 +406,106 @@ class GateKeeper:
         
         print(f"{color}{message}{Style.RESET_ALL}")
 
-    def save_results(self, results, filename=None, encrypt=True, format='json', notify=False):
+    def _save_json_results(self, results: List[Dict], filename: str, encrypt: bool) -> str:
         """
-        Save scan results to a file in the specified format.
-        Supports JSON, CSV, and HTML formats.
+        Save scan results in JSON format.
         
         Args:
             results: Scan results to save
-            filename: Output filename (without extension)
+            filename: Base filename (without extension)
             encrypt: Whether to encrypt the results
-            format: Output format (json, csv, html, all)
-            notify: Whether to send notifications
             
         Returns:
-            bool: True if successful, False otherwise
+            str: Path to the saved file
         """
-        if not results:
-            self.logger.warning("No results to save")
-            return False
+        json_file = f"{filename}.json"
+        json_data = {
+            "scan_info": {
+                "target": self.target,
+                "timestamp": datetime.now().isoformat(),
+                "ports_scanned": len(self.ports),
+                "open_ports_found": len(results),
+                "scan_duration": time.time() - self.start_time if self.start_time else 0
+            },
+            "results": results
+        }
         
-        if not filename:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"gatekeeper_scan_{timestamp}"
+        with open(json_file, 'w') as f:
+            json.dump(json_data, f, indent=2)
         
-        # Remove any extension from the filename
-        filename = os.path.splitext(filename)[0]
+        if encrypt:
+            self._encrypt_file(json_file)
+            self._log_and_print(f"Results saved and encrypted to {json_file}.enc")
+            return f"{json_file}.enc"
+        else:
+            self._log_and_print(f"Results saved to {json_file}")
+            return json_file
         
-        try:
-            # Save in JSON format
-            json_file = f"{filename}.json"
-            json_data = {
-                "scan_info": {
-                    "target": self.target,
-                    "timestamp": datetime.now().isoformat(),
-                    "ports_scanned": len(self.ports),
-                    "open_ports_found": len(results),
-                    "scan_duration": time.time() - self.start_time if self.start_time else 0
-                },
-                "results": results
-            }
+        return json_data  # Return the data for potential use by other formats
+    
+    def _save_csv_results(self, results: List[Dict], filename: str) -> str:
+        """
+        Save scan results in CSV format.
+        
+        Args:
+            results: Scan results to save
+            filename: Base filename (without extension)
             
-            if format in ['json', 'all']:
-                with open(json_file, 'w') as f:
-                    json.dump(json_data, f, indent=2)
+        Returns:
+            str: Path to the saved file
+        """
+        csv_file = f"{filename}.csv"
+        with open(csv_file, 'w', newline='') as f:
+            # Determine all possible fields from results
+            fieldnames = ['port', 'state', 'service', 'version']
+            
+            # Check if we have vulnerability data
+            has_vulns = any('vulnerabilities' in result for result in results)
+            if has_vulns:
+                fieldnames.extend(['vuln_id', 'severity', 'description'])
+            
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            
+            for result in results:
+                # Base row with port information
+                row = {
+                    'port': result.get('port', ''),
+                    'state': result.get('state', ''),
+                    'service': result.get('service', ''),
+                    'version': result.get('version', '')
+                }
                 
-                if encrypt:
-                    self._encrypt_file(json_file)
-                    self._log_and_print(f"Results saved and encrypted to {json_file}.enc")
+                # If no vulnerabilities, write the row as is
+                if not has_vulns or 'vulnerabilities' not in result or not result['vulnerabilities']:
+                    writer.writerow(row)
                 else:
-                    self._log_and_print(f"Results saved to {json_file}")
+                    # Write a row for each vulnerability
+                    for vuln in result['vulnerabilities']:
+                        vuln_row = row.copy()
+                        vuln_row['vuln_id'] = vuln.get('id', '')
+                        vuln_row['severity'] = vuln.get('severity', '')
+                        vuln_row['description'] = vuln.get('description', '')
+                        writer.writerow(vuln_row)
+        
+        self._log_and_print(f"Results saved to {csv_file}")
+        return csv_file
+    
+    def _save_html_results(self, results: List[Dict], filename: str) -> str:
+        """
+        Save scan results in HTML format.
+        
+        Args:
+            results: Scan results to save
+            filename: Base filename (without extension)
             
-            # Save in CSV format
-            if format in ['csv', 'all']:
-                csv_file = f"{filename}.csv"
-                with open(csv_file, 'w', newline='') as f:
-                    # Determine all possible fields from results
-                    fieldnames = ['port', 'state', 'service', 'version']
-                    
-                    # Check if we have vulnerability data
-                    has_vulns = any('vulnerabilities' in result for result in results)
-                    if has_vulns:
-                        fieldnames.extend(['vuln_id', 'severity', 'description'])
-                    
-                    writer = csv.DictWriter(f, fieldnames=fieldnames)
-                    writer.writeheader()
-                    
-                    for result in results:
-                        # Base row with port information
-                        row = {
-                            'port': result.get('port', ''),
-                            'state': result.get('state', ''),
-                            'service': result.get('service', ''),
-                            'version': result.get('version', '')
-                        }
-                        
-                        # If no vulnerabilities, write the row as is
-                        if not has_vulns or 'vulnerabilities' not in result or not result['vulnerabilities']:
-                            writer.writerow(row)
-                        else:
-                            # Write a row for each vulnerability
-                            for vuln in result['vulnerabilities']:
-                                vuln_row = row.copy()
-                                vuln_row['vuln_id'] = vuln.get('id', '')
-                                vuln_row['severity'] = vuln.get('severity', '')
-                                vuln_row['description'] = vuln.get('description', '')
-                                writer.writerow(vuln_row)
-                
-                self._log_and_print(f"Results saved to {csv_file}")
-            
-            # Save in HTML format
-            if format in ['html', 'all']:
-                html_file = f"{filename}.html"
-                with open(html_file, 'w') as f:
-                    # Create a simple HTML report
-                    html_content = f"""<!DOCTYPE html>
+        Returns:
+            str: Path to the saved file
+        """
+        html_file = f"{filename}.html"
+        with open(html_file, 'w') as f:
+            # Create a simple HTML report
+            html_content = f"""<!DOCTYPE html>
 <html>
 <head>
     <title>GateKeeper Scan Report - {html.escape(self.target)}</title>
@@ -532,26 +538,26 @@ class GateKeeper:
             <th>Version</th>
         </tr>
 """
-                    
-                    # Add rows for each open port
-                    for result in results:
-                        port = result.get('port', '')
-                        state = result.get('state', '')
-                        service = result.get('service', '')
-                        version = result.get('version', '')
-                        
-                        html_content += f"""        <tr>
+            
+            # Add rows for each open port
+            for result in results:
+                port = result.get('port', '')
+                state = result.get('state', '')
+                service = result.get('service', '')
+                version = result.get('version', '')
+                
+                html_content += f"""        <tr>
             <td>{port}</td>
             <td>{state}</td>
             <td>{service}</td>
             <td>{html.escape(str(version))}</td>
         </tr>
 """
-                    
-                    # Check if we have vulnerability data
-                    has_vulns = any('vulnerabilities' in result and result['vulnerabilities'] for result in results)
-                    if has_vulns:
-                        html_content += """    </table>
+            
+            # Check if we have vulnerability data
+            has_vulns = any('vulnerabilities' in result and result['vulnerabilities'] for result in results)
+            if has_vulns:
+                html_content += """    </table>
     
     <h2>Potential Vulnerabilities</h2>
     <table>
@@ -563,22 +569,22 @@ class GateKeeper:
             <th>Description</th>
         </tr>
 """
+                
+                # Add rows for each vulnerability
+                for result in results:
+                    if 'vulnerabilities' in result and result['vulnerabilities']:
+                        port = result.get('port', '')
+                        service = result.get('service', '')
                         
-                        # Add rows for each vulnerability
-                        for result in results:
-                            if 'vulnerabilities' in result and result['vulnerabilities']:
-                                port = result.get('port', '')
-                                service = result.get('service', '')
-                                
-                                for vuln in result['vulnerabilities']:
-                                    severity = vuln.get('severity', '')
-                                    vuln_id = vuln.get('id', '')
-                                    description = vuln.get('description', '')
-                                    
-                                    # Add CSS class based on severity
-                                    severity_class = severity.lower() if severity.lower() in ['critical', 'high', 'medium', 'low'] else ''
-                                    
-                                    html_content += f"""        <tr>
+                        for vuln in result['vulnerabilities']:
+                            severity = vuln.get('severity', '')
+                            vuln_id = vuln.get('id', '')
+                            description = vuln.get('description', '')
+                            
+                            # Add CSS class based on severity
+                            severity_class = severity.lower() if severity.lower() in ['critical', 'high', 'medium', 'low'] else ''
+                            
+                            html_content += f"""        <tr>
             <td>{port}</td>
             <td>{service}</td>
             <td class="{severity_class}">{severity}</td>
@@ -586,9 +592,9 @@ class GateKeeper:
             <td>{html.escape(description)}</td>
         </tr>
 """
-                    
-                    # Close the HTML document
-                    html_content += """    </table>
+            
+            # Close the HTML document
+            html_content += """    </table>
     
     <div class="footer">
         <p>Generated by GateKeeper Network Security Scanner</p>
@@ -596,14 +602,68 @@ class GateKeeper:
 </body>
 </html>
 """
-                    
-                    f.write(html_content)
-                
-                self._log_and_print(f"Results saved to {html_file}")
+            
+            f.write(html_content)
+        
+        self._log_and_print(f"Results saved to {html_file}")
+        return html_file
+
+    def save_results(self, results, filename=None, encrypt=True, format='json', notify=False):
+        """
+        Save scan results to a file in the specified format.
+        Supports JSON, CSV, and HTML formats.
+        
+        Args:
+            results: Scan results to save
+            filename: Output filename (without extension)
+            encrypt: Whether to encrypt the results
+            format: Output format (json, csv, html, all)
+            notify: Whether to send notifications
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        if not results:
+            self.logger.warning("No results to save")
+            return False
+        
+        if not filename:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"gatekeeper_scan_{timestamp}"
+        
+        # Remove any extension from the filename
+        filename = os.path.splitext(filename)[0]
+        
+        try:
+            json_data = None
+            
+            # Process each requested format
+            if format in ['json', 'all']:
+                json_data = self._save_json_results(results, filename, encrypt)
+            
+            if format in ['csv', 'all']:
+                self._save_csv_results(results, filename)
+            
+            if format in ['html', 'all']:
+                self._save_html_results(results, filename)
             
             # Process notifications if enabled
             if notify:
-                self.process_notifications(json_data)
+                if isinstance(json_data, dict):
+                    self.process_notifications(json_data)
+                else:
+                    # Create the JSON data structure if we didn't already create it
+                    json_data = {
+                        "scan_info": {
+                            "target": self.target,
+                            "timestamp": datetime.now().isoformat(),
+                            "ports_scanned": len(self.ports),
+                            "open_ports_found": len(results),
+                            "scan_duration": time.time() - self.start_time if self.start_time else 0
+                        },
+                        "results": results
+                    }
+                    self.process_notifications(json_data)
             
             return True
         
