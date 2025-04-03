@@ -948,34 +948,124 @@ class GateKeeper:
     def main(self) -> None:
         """
         Main entry point for the GateKeeper application.
+        Uses argparse subcommands for better organization of different functionality.
         """
-        parser = argparse.ArgumentParser(description="GateKeeper Network Security Scanner")
-        parser.add_argument("--target", help="Target IP address or hostname")
-        parser.add_argument("--ports", help="Port numbers to scan (e.g. 80,443,8000-8010)")
-        parser.add_argument("--policy", help="Scan policy name")
-        parser.add_argument("--group", help="Target group name")
-        parser.add_argument("--compare", nargs=2, metavar=("REPORT1", "REPORT2"), help="Compare two scan reports")
-        parser.add_argument("--list-reports", action="store_true", help="List available scan reports")
-        parser.add_argument("--analyze-behavior", metavar="REPORT", help="Analyze port behavior from a scan report")
-        parser.add_argument("--export", metavar="REPORT", help="Export scan results to CSV and HTML")
-        parser.add_argument("--notify", action="store_true", help="Send notifications based on scan results")
+        parser = argparse.ArgumentParser(
+            description="GateKeeper Network Security Scanner",
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+            epilog="Example usage:\n"
+                   "  Scan a target:                 gatekeeper.py scan --target example.com --ports 80,443\n"
+                   "  Use a scan policy:             gatekeeper.py scan --target example.com --policy quick\n"
+                   "  Scan a target group:           gatekeeper.py scan --group web_servers\n"
+                   "  Compare two reports:           gatekeeper.py compare report1.json report2.json\n"
+                   "  Export a report:               gatekeeper.py export report.json\n"
+                   "  Analyze port behavior:         gatekeeper.py analyze report.json\n"
+                   "  List available reports:        gatekeeper.py reports list\n"
+                   "  List available policies:       gatekeeper.py policies list\n"
+                   "  List available target groups:  gatekeeper.py groups list\n"
+        )
+        
+        # Create subparsers
+        subparsers = parser.add_subparsers(dest="command", help="Command to execute")
+        
+        # Scan command
+        scan_parser = subparsers.add_parser("scan", help="Perform a network scan")
+        scan_parser.add_argument("-t", "--target", help="Target IP address or hostname")
+        scan_parser.add_argument("-p", "--ports", help="Port numbers to scan (e.g. 80,443,8000-8010)")
+        scan_parser.add_argument("--policy", help="Scan policy name")
+        scan_parser.add_argument("-g", "--group", help="Target group name")
+        scan_parser.add_argument("--notify", action="store_true", help="Send notifications based on scan results")
+        scan_parser.add_argument("--output", help="Output filename (without extension)")
+        scan_parser.add_argument("--format", choices=["json", "csv", "html", "all"], default="json", 
+                               help="Output format (default: json)")
+        scan_parser.add_argument("--no-encrypt", action="store_true", help="Disable encryption of JSON results")
+        
+        # Compare command
+        compare_parser = subparsers.add_parser("compare", help="Compare two scan reports")
+        compare_parser.add_argument("report1", help="First report file")
+        compare_parser.add_argument("report2", help="Second report file")
+        
+        # Reports command
+        reports_parser = subparsers.add_parser("reports", help="Manage scan reports")
+        reports_subparsers = reports_parser.add_subparsers(dest="reports_command", help="Reports command")
+        reports_list_parser = reports_subparsers.add_parser("list", help="List available scan reports")
+        
+        # Export command
+        export_parser = subparsers.add_parser("export", help="Export scan results to different formats")
+        export_parser.add_argument("report", help="Report file to export")
+        export_parser.add_argument("--format", choices=["csv", "html", "all"], default="all", 
+                                 help="Export format (default: all)")
+        
+        # Analyze command
+        analyze_parser = subparsers.add_parser("analyze", help="Analyze port behavior from scan reports")
+        analyze_parser.add_argument("report", help="Report file to analyze")
+        
+        # Policies command
+        policies_parser = subparsers.add_parser("policies", help="Manage scan policies")
+        policies_subparsers = policies_parser.add_subparsers(dest="policies_command", help="Policies command")
+        policies_list_parser = policies_subparsers.add_parser("list", help="List available scan policies")
+        
+        # Groups command
+        groups_parser = subparsers.add_parser("groups", help="Manage target groups")
+        groups_subparsers = groups_parser.add_subparsers(dest="groups_command", help="Groups command")
+        groups_list_parser = groups_subparsers.add_parser("list", help="List available target groups")
         
         args = parser.parse_args()
         
-        if args.compare:
-            self.compare_reports(*args.compare)
-        elif args.list_reports:
-            self.list_available_reports()
-        elif args.analyze_behavior:
-            self.analyze_port_behavior(args.analyze_behavior)
-        elif args.export:
-            export_results(args.export)
-        else:
-            if not args.target or not args.ports:
-                parser.error("--target and --ports are required for a scan")
+        # If no command specified, show help
+        if not args.command:
+            parser.print_help()
+            return
+        
+        # Handle commands
+        if args.command == "scan":
+            # Validate scan arguments
+            if not args.target and not args.group:
+                scan_parser.error("Either --target or --group is required for a scan")
             
-            ports = self.parse_ports(args.ports)
-            self.scan(args.target, ports, args.policy, args.group, args.notify)
+            if not args.ports and not args.group and not args.policy:
+                scan_parser.error("Either --ports, --group, or --policy is required for a scan")
+            
+            ports = []
+            if args.ports:
+                ports = self.parse_ports(args.ports)
+            
+            self.scan(
+                target=args.target, 
+                ports=ports, 
+                policy=args.policy, 
+                group=args.group, 
+                notify=args.notify
+            )
+            
+        elif args.command == "compare":
+            self.compare_reports(args.report1, args.report2)
+            
+        elif args.command == "reports":
+            if args.reports_command == "list":
+                self.list_available_reports()
+            else:
+                reports_parser.print_help()
+                
+        elif args.command == "export":
+            export_results(args.report, args.format)
+            
+        elif args.command == "analyze":
+            self.analyze_port_behavior(args.report)
+            
+        elif args.command == "policies":
+            if args.policies_command == "list":
+                policy_manager = get_policy_manager()
+                policy_manager.list_policies()
+            else:
+                policies_parser.print_help()
+                
+        elif args.command == "groups":
+            if args.groups_command == "list":
+                target_groups = get_target_groups()
+                target_groups.list_groups()
+            else:
+                groups_parser.print_help()
 
 if __name__ == "__main__":
     gatekeeper = GateKeeper()
