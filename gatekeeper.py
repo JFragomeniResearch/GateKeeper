@@ -253,6 +253,35 @@ class GateKeeper:
         
         return None  # Return None for all error cases
 
+    def _get_service_probe(self, port: int) -> Optional[bytes]:
+        """
+        Get an appropriate probe for the given port.
+        
+        Args:
+            port: The port number to get a probe for
+            
+        Returns:
+            Optional[bytes]: The probe data as bytes, or None if no probe is needed
+        """
+        if port in [80, 443, 8080]:
+            # HTTP probe
+            return f"GET / HTTP/1.1\r\nHost: {self.target}\r\n\r\n".encode()
+        elif port in [25, 587]:
+            # SMTP probe
+            return b"EHLO gatekeeper.scan\r\n"
+        elif port == 21:
+            # FTP probe - just connect, no need to send data
+            return None
+        elif port == 22:
+            # SSH probe - just connect, no need to send data
+            return None
+        elif port == 3306:
+            # MySQL probe
+            return None
+        
+        # No specific probe for other ports
+        return None
+
     async def _identify_service(self, port: int) -> Dict[str, str]:
         """
         Identify the service running on a specific port.
@@ -271,14 +300,8 @@ class GateKeeper:
                 self.target, port, timeout=self.timeout
             )
             
-            # Determine appropriate probe based on port
-            probe_data = None
-            if port in [80, 443, 8080]:
-                # HTTP probe
-                probe_data = f"GET / HTTP/1.1\r\nHost: {self.target}\r\n\r\n".encode()
-            elif port in [25, 587]:
-                # SMTP probe
-                probe_data = b"EHLO gatekeeper.scan\r\n"
+            # Get appropriate probe based on port
+            probe_data = self._get_service_probe(port)
             
             # Send probe if available
             if probe_data:
@@ -330,45 +353,43 @@ class GateKeeper:
             self.logger.error(f"Service identification failed for port {port}: {e}")
             return service_info
             
+    def _extract_service_info(self, service_name: str, response_str: str, pattern: str) -> Dict[str, str]:
+        """
+        Extract service information using a regex pattern.
+        
+        Args:
+            service_name: Name of the service
+            response_str: Response string to extract info from
+            pattern: Regex pattern to match the version information
+            
+        Returns:
+            Dict[str, str]: Dictionary containing service name and version
+        """
+        match = re.search(pattern, response_str)
+        return {
+            "name": service_name,
+            "version": match.group(1) if match else ""
+        }
+            
     def _extract_http_info(self, response_str: str) -> Dict[str, str]:
         """Extract HTTP server information from response."""
-        server_match = re.search(r"Server: ([^\r\n]+)", response_str)
-        return {
-            "name": "HTTP",
-            "version": server_match.group(1) if server_match else ""
-        }
+        return self._extract_service_info("HTTP", response_str, r"Server: ([^\r\n]+)")
         
     def _extract_ssh_info(self, response_str: str) -> Dict[str, str]:
         """Extract SSH server information from response."""
-        ssh_match = re.search(r"SSH-\d+\.\d+-([^\r\n]+)", response_str)
-        return {
-            "name": "SSH",
-            "version": ssh_match.group(1) if ssh_match else ""
-        }
+        return self._extract_service_info("SSH", response_str, r"SSH-\d+\.\d+-([^\r\n]+)")
         
     def _extract_ftp_info(self, response_str: str) -> Dict[str, str]:
         """Extract FTP server information from response."""
-        ftp_match = re.search(r"220[- ]([^\r\n]+)", response_str)
-        return {
-            "name": "FTP",
-            "version": ftp_match.group(1) if ftp_match else ""
-        }
+        return self._extract_service_info("FTP", response_str, r"220[- ]([^\r\n]+)")
         
     def _extract_smtp_info(self, response_str: str) -> Dict[str, str]:
         """Extract SMTP server information from response."""
-        smtp_match = re.search(r"220[- ]([^\r\n]+)", response_str)
-        return {
-            "name": "SMTP",
-            "version": smtp_match.group(1) if smtp_match else ""
-        }
+        return self._extract_service_info("SMTP", response_str, r"220[- ]([^\r\n]+)")
         
     def _extract_mysql_info(self, response_str: str) -> Dict[str, str]:
         """Extract MySQL server information from response."""
-        mysql_match = re.search(r"([0-9]+\.[0-9]+\.[0-9]+)", response_str)
-        return {
-            "name": "MySQL",
-            "version": mysql_match.group(1) if mysql_match else ""
-        }
+        return self._extract_service_info("MySQL", response_str, r"([0-9]+\.[0-9]+\.[0-9]+)")
 
     def encrypt_results(self, results: List[Dict]) -> bytes:
         """Encrypt scan results"""
