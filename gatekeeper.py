@@ -427,7 +427,7 @@ class GateKeeper:
         
         print(f"{color}{message}{Style.RESET_ALL}")
 
-    def _save_json_results(self, results: List[Dict], filename: str, encrypt: bool) -> str:
+    def _save_json_results(self, results: List[Dict], filename: str, encrypt: bool) -> Dict[str, Any]:
         """
         Save scan results in JSON format.
         
@@ -437,7 +437,7 @@ class GateKeeper:
             encrypt: Whether to encrypt the results
             
         Returns:
-            str: Path to the saved file
+            Dict[str, Any]: The JSON data structure containing scan info and results
         """
         json_file = f"{filename}.json"
         json_data = {
@@ -457,13 +457,11 @@ class GateKeeper:
         if encrypt:
             self._encrypt_file(json_file)
             self._log_and_print(f"Results saved and encrypted to {json_file}.enc")
-            return f"{json_file}.enc"
         else:
             self._log_and_print(f"Results saved to {json_file}")
-            return json_file
         
-        return json_data  # Return the data for potential use by other formats
-    
+        return json_data  # Always return the data structure for potential use by other functions
+
     def _save_csv_results(self, results: List[Dict], filename: str) -> str:
         """
         Save scan results in CSV format.
@@ -656,11 +654,22 @@ class GateKeeper:
         filename = os.path.splitext(filename)[0]
         
         try:
-            json_data = None
+            # Create the JSON data structure for potential notifications, regardless of selected format
+            json_data = {
+                "scan_info": {
+                    "target": self.target,
+                    "timestamp": datetime.now().isoformat(),
+                    "ports_scanned": len(self.ports),
+                    "open_ports_found": len(results),
+                    "scan_duration": time.time() - self.start_time if self.start_time else 0
+                },
+                "results": results
+            }
             
             # Process each requested format
             if format in ['json', 'all']:
-                json_data = self._save_json_results(results, filename, encrypt)
+                # Use _save_json_results to save the file, but we already have the data structure
+                self._save_json_results(results, filename, encrypt)
             
             if format in ['csv', 'all']:
                 self._save_csv_results(results, filename)
@@ -670,21 +679,7 @@ class GateKeeper:
             
             # Process notifications if enabled
             if notify:
-                if isinstance(json_data, dict):
-                    self.process_notifications(json_data)
-                else:
-                    # Create the JSON data structure if we didn't already create it
-                    json_data = {
-                        "scan_info": {
-                            "target": self.target,
-                            "timestamp": datetime.now().isoformat(),
-                            "ports_scanned": len(self.ports),
-                            "open_ports_found": len(results),
-                            "scan_duration": time.time() - self.start_time if self.start_time else 0
-                        },
-                        "results": results
-                    }
-                    self.process_notifications(json_data)
+                self.process_notifications(json_data)
             
             return True
         
