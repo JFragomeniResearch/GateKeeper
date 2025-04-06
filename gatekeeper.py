@@ -7,6 +7,7 @@ import concurrent.futures
 from datetime import datetime
 from pathlib import Path
 import logging
+import logging.handlers
 import time
 import dns.resolver  # for DNS verification
 from cryptography.fernet import Fernet  # for encryption
@@ -123,21 +124,52 @@ class GateKeeper:
             return False
 
     def _setup_logging(self) -> logging.Logger:
-        """Set up logging configuration."""
+        """
+        Set up logging configuration with custom formatting and log rotation.
+        
+        Returns:
+            logging.Logger: Configured logger instance
+        """
+        # Create logger
         logger = logging.getLogger('GateKeeper')
         logger.setLevel(logging.INFO)
+        
+        # Clear any existing handlers (to avoid duplicates if the method is called multiple times)
+        if logger.hasHandlers():
+            logger.handlers.clear()
         
         # Create logs directory if it doesn't exist
         log_file = Path('logs/gatekeeper.log')
         log_file.parent.mkdir(exist_ok=True)
         
-        # Add handlers
-        logger.addHandler(
-            logging.FileHandler(log_file),
+        # Create formatters
+        detailed_formatter = logging.Formatter(
+            fmt='%(asctime)s [%(levelname)8s] %(name)s:%(lineno)d - %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
         )
-        logger.addHandler(
-            logging.StreamHandler()
+        console_formatter = logging.Formatter(
+            fmt='%(asctime)s [%(levelname)s] %(message)s',
+            datefmt='%H:%M:%S'
         )
+        
+        # File handler with rotation (max 5MB per file, keep 5 backup files)
+        file_handler = logging.handlers.RotatingFileHandler(
+            log_file, maxBytes=5*1024*1024, backupCount=5, encoding='utf-8'
+        )
+        file_handler.setLevel(logging.INFO)
+        file_handler.setFormatter(detailed_formatter)
+        
+        # Console handler with simpler format
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(logging.INFO)
+        console_handler.setFormatter(console_formatter)
+        
+        # Add handlers to logger
+        logger.addHandler(file_handler)
+        logger.addHandler(console_handler)
+        
+        # Log startup message
+        logger.info("GateKeeper logging initialized")
         
         return logger
 
