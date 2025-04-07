@@ -12,7 +12,7 @@ import time
 import dns.resolver  # for DNS verification
 from cryptography.fernet import Fernet  # for encryption
 import json
-from typing import List, Tuple, Dict, Optional, Any
+from typing import List, Tuple, Dict, Optional, Any, TextIO, BinaryIO, Union, ContextManager
 from utils.banner import display_banner, display_scan_start, display_scan_complete
 from utils.report_compare import ReportComparer, find_latest_reports
 from utils.port_behavior import PortBehaviorAnalyzer
@@ -34,6 +34,8 @@ import shutil
 import py_cui
 import threading
 import queue
+import contextlib
+from typing import Iterator
 
 # Initialize colorama
 init(autoreset=True)  # Automatically reset colors after each print
@@ -101,7 +103,8 @@ class GateKeeper:
                 return False
                 
             # Read the file in binary mode
-            with open(file_path, 'rb') as f:
+            data = None
+            with self._open_file(file_path, 'rb') as f:
                 data = f.read()
                 
             # Encrypt the data
@@ -110,7 +113,7 @@ class GateKeeper:
             
             # Write the encrypted data to a new file
             encrypted_file = f"{file_path}.enc"
-            with open(encrypted_file, 'wb') as f:
+            with self._open_file(encrypted_file, 'wb') as f:
                 f.write(encrypted_data)
                 
             # Delete the original file
@@ -483,14 +486,17 @@ class GateKeeper:
             "results": results
         }
         
-        with open(json_file, 'w') as f:
-            json.dump(json_data, f, indent=2)
-        
-        if encrypt:
-            self._encrypt_file(json_file)
-            self._log_and_print(f"Results saved and encrypted to {json_file}.enc")
-        else:
-            self._log_and_print(f"Results saved to {json_file}")
+        try:
+            with self._open_file(json_file, 'w', encoding='utf-8') as f:
+                json.dump(json_data, f, indent=2)
+            
+            if encrypt:
+                self._encrypt_file(json_file)
+                self._log_and_print(f"Results saved and encrypted to {json_file}.enc")
+            else:
+                self._log_and_print(f"Results saved to {json_file}")
+        except (IOError, PermissionError) as e:
+            self._log_and_print(f"Error saving results to {json_file}: {e}", level='error', color=Fore.RED)
         
         return json_data  # Always return the data structure for potential use by other functions
 
@@ -506,40 +512,44 @@ class GateKeeper:
             str: Path to the saved file
         """
         csv_file = f"{filename}.csv"
-        with open(csv_file, 'w', newline='') as f:
-            # Determine all possible fields from results
-            fieldnames = ['port', 'state', 'service', 'version']
-            
-            # Check if we have vulnerability data
-            has_vulns = any('vulnerabilities' in result for result in results)
-            if has_vulns:
-                fieldnames.extend(['vuln_id', 'severity', 'description'])
-            
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
-            writer.writeheader()
-            
-            for result in results:
-                # Base row with port information
-                row = {
-                    'port': result.get('port', ''),
-                    'state': result.get('state', ''),
-                    'service': result.get('service', ''),
-                    'version': result.get('version', '')
-                }
+        try:
+            with self._open_file(csv_file, 'w', newline='', encoding='utf-8') as f:
+                # Determine all possible fields from results
+                fieldnames = ['port', 'state', 'service', 'version']
                 
-                # If no vulnerabilities, write the row as is
-                if not has_vulns or 'vulnerabilities' not in result or not result['vulnerabilities']:
-                    writer.writerow(row)
-                else:
-                    # Write a row for each vulnerability
-                    for vuln in result['vulnerabilities']:
-                        vuln_row = row.copy()
-                        vuln_row['vuln_id'] = vuln.get('id', '')
-                        vuln_row['severity'] = vuln.get('severity', '')
-                        vuln_row['description'] = vuln.get('description', '')
-                        writer.writerow(vuln_row)
-        
-        self._log_and_print(f"Results saved to {csv_file}")
+                # Check if we have vulnerability data
+                has_vulns = any('vulnerabilities' in result for result in results)
+                if has_vulns:
+                    fieldnames.extend(['vuln_id', 'severity', 'description'])
+                
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                writer.writeheader()
+                
+                for result in results:
+                    # Base row with port information
+                    row = {
+                        'port': result.get('port', ''),
+                        'state': result.get('state', ''),
+                        'service': result.get('service', ''),
+                        'version': result.get('version', '')
+                    }
+                    
+                    # If no vulnerabilities, write the row as is
+                    if not has_vulns or 'vulnerabilities' not in result or not result['vulnerabilities']:
+                        writer.writerow(row)
+                    else:
+                        # Write a row for each vulnerability
+                        for vuln in result['vulnerabilities']:
+                            vuln_row = row.copy()
+                            vuln_row['vuln_id'] = vuln.get('id', '')
+                            vuln_row['severity'] = vuln.get('severity', '')
+                            vuln_row['description'] = vuln.get('description', '')
+                            writer.writerow(vuln_row)
+            
+            self._log_and_print(f"Results saved to {csv_file}")
+        except (IOError, PermissionError) as e:
+            self._log_and_print(f"Error saving results to {csv_file}: {e}", level='error', color=Fore.RED)
+            
         return csv_file
     
     def _save_html_results(self, results: List[Dict], filename: str) -> str:
@@ -554,9 +564,8 @@ class GateKeeper:
             str: Path to the saved file
         """
         html_file = f"{filename}.html"
-        with open(html_file, 'w') as f:
-            # Create a simple HTML report
-            html_content = f"""<!DOCTYPE html>
+        # Create a simple HTML report
+        html_content = f"""<!DOCTYPE html>
 <html>
 <head>
     <title>GateKeeper Scan Report - {html.escape(self.target)}</title>
@@ -589,26 +598,26 @@ class GateKeeper:
             <th>Version</th>
         </tr>
 """
+        
+        # Add rows for each open port
+        for result in results:
+            port = result.get('port', '')
+            state = result.get('state', '')
+            service = result.get('service', '')
+            version = result.get('version', '')
             
-            # Add rows for each open port
-            for result in results:
-                port = result.get('port', '')
-                state = result.get('state', '')
-                service = result.get('service', '')
-                version = result.get('version', '')
-                
-                html_content += f"""        <tr>
+            html_content += f"""        <tr>
             <td>{port}</td>
             <td>{state}</td>
             <td>{service}</td>
             <td>{html.escape(str(version))}</td>
         </tr>
 """
-            
-            # Check if we have vulnerability data
-            has_vulns = any('vulnerabilities' in result and result['vulnerabilities'] for result in results)
-            if has_vulns:
-                html_content += """    </table>
+        
+        # Check if we have vulnerability data
+        has_vulns = any('vulnerabilities' in result and result['vulnerabilities'] for result in results)
+        if has_vulns:
+            html_content += """    </table>
     
     <h2>Potential Vulnerabilities</h2>
     <table>
@@ -620,22 +629,22 @@ class GateKeeper:
             <th>Description</th>
         </tr>
 """
-                
-                # Add rows for each vulnerability
-                for result in results:
-                    if 'vulnerabilities' in result and result['vulnerabilities']:
-                        port = result.get('port', '')
-                        service = result.get('service', '')
+            
+            # Add rows for each vulnerability
+            for result in results:
+                if 'vulnerabilities' in result and result['vulnerabilities']:
+                    port = result.get('port', '')
+                    service = result.get('service', '')
+                    
+                    for vuln in result['vulnerabilities']:
+                        severity = vuln.get('severity', '')
+                        vuln_id = vuln.get('id', '')
+                        description = vuln.get('description', '')
                         
-                        for vuln in result['vulnerabilities']:
-                            severity = vuln.get('severity', '')
-                            vuln_id = vuln.get('id', '')
-                            description = vuln.get('description', '')
-                            
-                            # Add CSS class based on severity
-                            severity_class = severity.lower() if severity.lower() in ['critical', 'high', 'medium', 'low'] else ''
-                            
-                            html_content += f"""        <tr>
+                        # Add CSS class based on severity
+                        severity_class = severity.lower() if severity.lower() in ['critical', 'high', 'medium', 'low'] else ''
+                        
+                        html_content += f"""        <tr>
             <td>{port}</td>
             <td>{service}</td>
             <td class="{severity_class}">{severity}</td>
@@ -643,9 +652,9 @@ class GateKeeper:
             <td>{html.escape(description)}</td>
         </tr>
 """
-            
-            # Close the HTML document
-            html_content += """    </table>
+        
+        # Close the HTML document
+        html_content += """    </table>
     
     <div class="footer">
         <p>Generated by GateKeeper Network Security Scanner</p>
@@ -653,10 +662,15 @@ class GateKeeper:
 </body>
 </html>
 """
-            
-            f.write(html_content)
         
-        self._log_and_print(f"Results saved to {html_file}")
+        try:
+            with self._open_file(html_file, 'w', encoding='utf-8') as f:
+                f.write(html_content)
+            
+            self._log_and_print(f"Results saved to {html_file}")
+        except (IOError, PermissionError) as e:
+            self._log_and_print(f"Error saving results to {html_file}: {e}", level='error', color=Fore.RED)
+            
         return html_file
 
     def save_results(self, results, filename=None, encrypt=True, format='json', notify=False):
@@ -992,6 +1006,28 @@ class GateKeeper:
         
         except Exception as e:
             self._log_and_print(f"Error processing notifications: {e}", level='error', color=Fore.RED)
+
+    def _read_file(self, file_path: str, binary: bool = False) -> Union[str, bytes, None]:
+        """
+        Safely read the contents of a file using the file context manager.
+        
+        Args:
+            file_path: Path to the file to read
+            binary: Whether to read in binary mode
+            
+        Returns:
+            Union[str, bytes, None]: File contents as string (text mode) or bytes (binary mode),
+                                    or None if the file couldn't be read
+        """
+        mode = 'rb' if binary else 'r'
+        encoding = None if binary else 'utf-8'
+        
+        try:
+            with self._open_file(file_path, mode, encoding=encoding) as f:
+                return f.read()
+        except (FileNotFoundError, PermissionError, IOError) as e:
+            self._log_and_print(f"Error reading file {file_path}: {e}", level='error', color=Fore.RED)
+            return None
 
     def main(self) -> None:
         """
