@@ -10820,3 +10820,186 @@ Test error message
 Test error message
 Test error message
 Test error message
+DNS verification failed for nonexistent.domain.local: DNS lookup failed
+DNS verification failed for nonexistent.domain.local: DNS lookup failed
+DNS verification failed for nonexistent.domain.local: DNS lookup failed
+DNS verification failed for nonexistent.domain.local: DNS lookup failed
+DNS verification failed for nonexistent.domain.local: DNS lookup failed
+DNS verification failed for nonexistent.domain.local: DNS lookup failed
+DNS verification failed for invalid.domain.thisisnotreal: [Errno 11001] getaddrinfo failed
+DNS verification failed for invalid.domain.thisisnotreal: [Errno 11001] getaddrinfo failed
+DNS verification failed for invalid.domain.thisisnotreal: [Errno 11001] getaddrinfo failed
+DNS verification failed for invalid.domain.thisisnotreal: [Errno 11001] getaddrinfo failed
+DNS verification failed for invalid.domain.thisisnotreal: [Errno 11001] getaddrinfo failed
+DNS verification failed for invalid.domain.thisisnotreal: [Errno 11001] getaddrinfo failed
+DNS verification failed for invalid.domain.thisisnotreal: [Errno 11001] getaddrinfo failed
+DNS verification failed for invalid.domain.thisisnotreal: [Errno 11001] getaddrinfo failed
+DNS verification failed for invalid.domain.thisisnotreal: [Errno 11001] getaddrinfo failed
+DNS verification failed for invalid.domain.thisisnotreal: [Errno 11001] getaddrinfo failed
+DNS verification failed for invalid.domain.thisisnotreal: [Errno 11001] getaddrinfo failed
+Error scanning port 80: 
+Error scanning port 80: 
+Error scanning port 80: 
+Error scanning port 80: 
+Error scanning port 80: 
+Error scanning port 80: 
+Error scanning port 80: 
+Error scanning port 80: 
+Error scanning port 80: 
+Error scanning port 80: 
+Error scanning port 80: 
+Results saved to gatekeeper_scan_20250318_222216.json
+Results saved to gatekeeper_scan_20250318_222216.json
+Results saved to gatekeeper_scan_20250318_222216.json
+Results saved to gatekeeper_scan_20250318_222216.json
+Results saved to gatekeeper_scan_20250318_222216.json
+Results saved to gatekeeper_scan_20250318_222216.json
+Results saved to gatekeeper_scan_20250318_222216.json
+Results saved to gatekeeper_scan_20250318_222216.json
+Results saved to gatekeeper_scan_20250318_222216.json
+Results saved to gatekeeper_scan_20250318_222216.json
+Results saved to gatekeeper_scan_20250318_222216.json
+Results saved to gatekeeper_scan_20250318_222216.json
+Results saved to gatekeeper_scan_20250318_222216.json
+Results saved to gatekeeper_scan_20250318_222216.json
+Results saved to gatekeeper_scan_20250318_222216.json
+Results saved to gatekeeper_scan_20250318_222216.json
+Results saved to gatekeeper_scan_20250318_222216.json
+Results saved to gatekeeper_scan_20250318_222216.json
+Results saved to gatekeeper_scan_20250318_222216.json
+Results saved to gatekeeper_scan_20250318_222216.json
+Results saved to gatekeeper_scan_20250318_222216.json
+Results saved to gatekeeper_scan_20250318_222216.json
+Results saved to gatekeeper_scan_20250318_222216.json
+Results saved to gatekeeper_scan_20250318_222216.json
+Results saved to gatekeeper_scan_20250318_222216.json
+Results saved to gatekeeper_scan_20250318_222216.json
+Service identification failed for port 80: TestGateKeeper.test_service_identification_edge_cases.<locals>.run_test.<locals>.mock_open_connection.<locals>.mock_read() takes 0 positional arguments but 1 was given
+Service identification failed for port 80: TestGateKeeper.test_service_identification_edge_cases.<locals>.run_test.<locals>.mock_open_connection.<locals>.mock_read() takes 0 positional arguments but 1 was given
+Service identification failed for port 80: TestGateKeeper.test_service_identification_edge_cases.<locals>.run_test.<locals>.mock_open_connection.<locals>.mock_read() takes 0 positional arguments but 1 was given
+Service identification failed for port 80: TestGateKeeper.test_service_identification_edge_cases.<locals>.run_test.<locals>.mock_open_connection.<locals>.mock_read() takes 0 positional arguments but 1 was given
+Service identification failed for port 80: TestGateKeeper.test_service_identification_edge_cases.<locals>.run_test.<locals>.mock_open_connection.<locals>.mock_read() takes 0 positional arguments but 1 was given
+Service identification failed for port 80: TestGateKeeper.test_service_identification_edge_cases.<locals>.run_test.<locals>.mock_open_connection.<locals>.mock_read() takes 0 positional arguments but 1 was given
+Service identification failed for port 80: TestGateKeeper.test_service_identification_edge_cases.<locals>.run_test.<locals>.mock_open_connection.<locals>.mock_read() takes 0 positional arguments but 1 was given
+Service identification failed for port 80: TestGateKeeper.test_service_identification_edge_cases.<locals>.run_test.<locals>.mock_open_connection.<locals>.mock_read() takes 0 positional arguments but 1 was given
+Service identification failed for port 80: TestGateKeeper.test_service_identification_edge_cases.<locals>.run_test.<locals>.mock_open_connection.<locals>.mock_read() takes 0 positional arguments but 1 was given
+Service identification failed for port 80: TestGateKeeper.test_service_identification_edge_cases.<locals>.run_test.<locals>.mock_open_connection.<locals>.mock_read() takes 0 positional arguments but 1 was given
+Service identification failed for port 80: TestGateKeeper.test_service_identification_edge_cases.<locals>.run_test.<locals>.mock_open_connection.<locals>.mock_read() takes 0 positional arguments but 1 was given
+Service identification failed for port 80: TestGateKeeper.test_service_identification_edge_cases.<locals>.run_test.<locals>.mock_open_connection.<locals>.mock_read() takes 0 positional arguments but 1 was given
+Service identification failed for port 80: TestGateKeeper.test_service_identification_edge_cases.<locals>.run_test.<locals>.mock_open_connection.<locals>.mock_read() takes 0 positional arguments but 1 was given
+Service identification failed for port 80: TestGateKeeper.test_service_identification_edge_cases.<locals>.run_test.<locals>.mock_open_connection.<locals>.mock_read() takes 0 positional arguments but 1 was given
+Service identification failed for port 80: TestGateKeeper.test_service_identification_edge_cases.<locals>.run_test.<locals>.mock_open_connection.<locals>.mock_read() takes 0 positional arguments but 1 was given
+Service identification failed for port 80: TestGateKeeper.test_service_identification_edge_cases.<locals>.run_test.<locals>.mock_open_connection.<locals>.mock_read() takes 0 positional arguments but 1 was given
+Service identification failed for port 80: TestGateKeeper.test_service_identification_edge_cases.<locals>.run_test.<locals>.mock_open_connection.<locals>.mock_read() takes 0 positional arguments but 1 was given
+Service identification failed for port 80: TestGateKeeper.test_service_identification_edge_cases.<locals>.run_test.<locals>.mock_open_connection.<locals>.mock_read() takes 0 positional arguments but 1 was given
+Service identification failed for port 80: TestGateKeeper.test_service_identification_edge_cases.<locals>.run_test.<locals>.mock_open_connection.<locals>.mock_read() takes 0 positional arguments but 1 was given
+Service identification failed for port 80: TestGateKeeper.test_service_identification_edge_cases.<locals>.run_test.<locals>.mock_open_connection.<locals>.mock_read() takes 0 positional arguments but 1 was given
+Service identification failed for port 80: TestGateKeeper.test_service_identification_edge_cases.<locals>.run_test.<locals>.mock_open_connection.<locals>.mock_read() takes 0 positional arguments but 1 was given
+Service identification failed for port 80: TestGateKeeper.test_service_identification_edge_cases.<locals>.run_test.<locals>.mock_open_connection.<locals>.mock_read() takes 0 positional arguments but 1 was given
+Service identification failed for port 80: TestGateKeeper.test_service_identification_edge_cases.<locals>.run_test.<locals>.mock_open_connection.<locals>.mock_read() takes 0 positional arguments but 1 was given
+Service identification failed for port 80: TestGateKeeper.test_service_identification_edge_cases.<locals>.run_test.<locals>.mock_open_connection.<locals>.mock_read() takes 0 positional arguments but 1 was given
+Service identification failed for port 80: TestGateKeeper.test_service_identification_edge_cases.<locals>.run_test.<locals>.mock_open_connection.<locals>.mock_read() takes 0 positional arguments but 1 was given
+Service identification failed for port 80: TestGateKeeper.test_service_identification_edge_cases.<locals>.run_test.<locals>.mock_open_connection.<locals>.mock_read() takes 0 positional arguments but 1 was given
+Service identification failed for port 80: TestGateKeeper.test_service_identification_edge_cases.<locals>.run_test.<locals>.mock_open_connection.<locals>.mock_read() takes 0 positional arguments but 1 was given
+Service identification failed for port 80: TestGateKeeper.test_service_identification_edge_cases.<locals>.run_test.<locals>.mock_open_connection.<locals>.mock_read() takes 0 positional arguments but 1 was given
+Service identification failed for port 80: TestGateKeeper.test_service_identification_edge_cases.<locals>.run_test.<locals>.mock_open_connection.<locals>.mock_read() takes 0 positional arguments but 1 was given
+Service identification failed for port 80: TestGateKeeper.test_service_identification_edge_cases.<locals>.run_test.<locals>.mock_open_connection.<locals>.mock_read() takes 0 positional arguments but 1 was given
+Test info message
+Test info message
+Test info message
+Test info message
+Test info message
+Test info message
+Test info message
+Test info message
+Test info message
+Test info message
+Test info message
+Test info message
+Test info message
+Test info message
+Test info message
+Test info message
+Test info message
+Test info message
+Test info message
+Test info message
+Test info message
+Test info message
+Test info message
+Test info message
+Test info message
+Test info message
+Test info message
+Test info message
+Test info message
+Test info message
+Test info message
+Test info message
+Test info message
+Test warning message
+Test warning message
+Test warning message
+Test warning message
+Test warning message
+Test warning message
+Test warning message
+Test warning message
+Test warning message
+Test warning message
+Test warning message
+Test warning message
+Test warning message
+Test warning message
+Test warning message
+Test warning message
+Test warning message
+Test warning message
+Test warning message
+Test warning message
+Test warning message
+Test warning message
+Test warning message
+Test warning message
+Test warning message
+Test warning message
+Test warning message
+Test warning message
+Test warning message
+Test warning message
+Test warning message
+Test warning message
+Test warning message
+Test error message
+Test error message
+Test error message
+Test error message
+Test error message
+Test error message
+Test error message
+Test error message
+Test error message
+Test error message
+Test error message
+Test error message
+Test error message
+Test error message
+Test error message
+Test error message
+Test error message
+Test error message
+Test error message
+Test error message
+Test error message
+Test error message
+Test error message
+Test error message
+Test error message
+Test error message
+Test error message
+Test error message
+Test error message
+Test error message
+Test error message
+Test error message
+Test error message
