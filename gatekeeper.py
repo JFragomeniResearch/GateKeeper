@@ -20,6 +20,7 @@ from utils.scan_policy import get_policy_manager
 from utils.target_groups import get_target_groups
 from utils.export import export_results
 from utils.notifications import get_notification_manager
+from utils.config import ConfigManager, ScanConfig, ScanState
 import asyncio
 from tqdm import tqdm
 from colorama import init, Fore, Style
@@ -42,7 +43,26 @@ init(autoreset=True)  # Automatically reset colors after each print
 
 class GateKeeper:
     def __init__(self):
+        """Initialize the GateKeeper application."""
+        # Set up logging
         self.logger = self._setup_logging()
+        
+        # Initialize configuration and state management
+        self.config_manager = ConfigManager(self.logger)
+        
+        # Initialize managers
+        self.policy_manager = get_policy_manager()
+        self.target_groups = get_target_groups()
+        self.notification_manager = get_notification_manager()
+        self.port_analyzer = PortBehaviorAnalyzer()
+        self.report_comparer = ReportComparer()
+        
+        # Generate encryption key if not already configured
+        if not self.config_manager.config.encryption_key:
+            self._generate_encryption_key()
+        
+        self.logger.info("GateKeeper initialized")
+        
         self.start_time = None
         self.target = None
         self.ports = []
@@ -50,7 +70,7 @@ class GateKeeper:
         self.timeout = 1
         self.rate_limit = 0.1
         self.max_scan_rate = 1000  # maximum ports per second
-        self.encryption_key = self._generate_encryption_key()
+        self.encryption_key = self.config_manager.config.encryption_key
         self.reports_dir = Path('reports')
         # Define common ports as a class attribute to avoid duplication
         self.common_ports = {
@@ -74,160 +94,262 @@ class GateKeeper:
         }
         
     def _generate_encryption_key(self) -> bytes:
-        """Generate encryption key for results."""
-        try:
-            key = Fernet.generate_key()
-            if not isinstance(key, bytes) or len(key) != 44:  # Fernet keys are 44 bytes when base64 encoded
-                raise ValueError("Invalid key format generated")
-            return key
-        except ValueError as e:
-            # Re-raise ValueError directly
-            raise e
-        except Exception as e:
-            raise RuntimeError(f"Failed to generate encryption key: {e}")
-
-    def _encrypt_file(self, file_path: str) -> bool:
-        """
-        Encrypt the contents of a file using Fernet symmetric encryption.
+        """Generate a new encryption key."""
+        config = self.config_manager.config
+        state = self.config_manager.state
         
-        Args:
-            file_path: Path to the file to encrypt
-            
-        Returns:
-            bool: True if encryption was successful, False otherwise
-        """
         try:
-            # Check if file exists
-            if not os.path.exists(file_path):
-                self.logger.error(f"File not found: {file_path}")
-                return False
-                
-            # Read the file in binary mode
-            data = None
-            with self._open_file(file_path, 'rb') as f:
-                data = f.read()
-                
-            # Encrypt the data
-            f = Fernet(self.encryption_key)
-            encrypted_data = f.encrypt(data)
+            # Generate a new key
+            key = Fernet.generate_key()
             
-            # Write the encrypted data to a new file
-            encrypted_file = f"{file_path}.enc"
-            with self._open_file(encrypted_file, 'wb') as f:
-                f.write(encrypted_data)
-                
-            # Delete the original file
-            os.remove(file_path)
+            # Update configuration
+            self.config_manager.update_config(encryption_key=key)
             
-            self.logger.info(f"File encrypted successfully: {encrypted_file}")
-            return True
+            self.logger.info("Generated new encryption key")
+            return key
             
         except Exception as e:
-            self.logger.error(f"Error encrypting file {file_path}: {e}")
+            self.logger.error(f"Error generating encryption key: {str(e)}")
+            self.config_manager.update_state(
+                error_count=state.error_count + 1
+            )
+            raise
+
+    def _encrypt_file(self, filepath: Union[str, Path]) -> bool:
+        """Encrypt a file using the configured encryption key."""
+        config = self.config_manager.config
+        state = self.config_manager.state
+        
+        if not config.encryption_key:
+            self.logger.error("No encryption key configured")
+            self.config_manager.update_state(
+                error_count=state.error_count + 1
+            )
+            return False
+        
+        try:
+            # Read the file content
+            content = self._read_file(filepath, binary=True)
+            if content is None:
+                return False
+            
+            # Encrypt the content
+            fernet = Fernet(config.encryption_key)
+            encrypted_content = fernet.encrypt(content)
+            
+            # Write the encrypted content
+            encrypted_file = Path(f"{filepath}.enc")
+            return self._write_file(encrypted_file, encrypted_content, binary=True)
+            
+        except Exception as e:
+            self.logger.error(f"Error encrypting file {filepath}: {str(e)}")
+            self.config_manager.update_state(
+                error_count=state.error_count + 1
+            )
             return False
 
+    def _decrypt_file(self, filepath: Union[str, Path]) -> Optional[bytes]:
+        """Decrypt a file using the configured encryption key."""
+        config = self.config_manager.config
+        state = self.config_manager.state
+        
+        if not config.encryption_key:
+            self.logger.error("No encryption key configured")
+            self.config_manager.update_state(
+                error_count=state.error_count + 1
+            )
+            return None
+        
+        try:
+            # Read the encrypted content
+            encrypted_content = self._read_file(filepath, binary=True)
+            if encrypted_content is None:
+                return None
+            
+            # Decrypt the content
+            fernet = Fernet(config.encryption_key)
+            return fernet.decrypt(encrypted_content)
+            
+        except Exception as e:
+            self.logger.error(f"Error decrypting file {filepath}: {str(e)}")
+            self.config_manager.update_state(
+                error_count=state.error_count + 1
+            )
+            return None
+
     def _setup_logging(self) -> logging.Logger:
-        """
-        Set up logging configuration with custom formatting and log rotation.
-        
-        Returns:
-            logging.Logger: Configured logger instance
-        """
-        # Create logger
-        logger = logging.getLogger('GateKeeper')
-        logger.setLevel(logging.INFO)
-        
-        # Clear any existing handlers (to avoid duplicates if the method is called multiple times)
-        if logger.hasHandlers():
-            logger.handlers.clear()
+        """Set up logging configuration."""
+        logger = logging.getLogger('gatekeeper')
+        logger.setLevel(logging.DEBUG)
         
         # Create logs directory if it doesn't exist
-        log_file = Path('logs/gatekeeper.log')
-        log_file.parent.mkdir(exist_ok=True)
+        log_dir = Path('logs')
+        log_dir.mkdir(exist_ok=True)
         
-        # Create formatters
-        detailed_formatter = logging.Formatter(
-            fmt='%(asctime)s [%(levelname)8s] %(name)s:%(lineno)d - %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S'
-        )
-        console_formatter = logging.Formatter(
-            fmt='%(asctime)s [%(levelname)s] %(message)s',
-            datefmt='%H:%M:%S'
-        )
-        
-        # File handler with rotation (max 5MB per file, keep 5 backup files)
+        # File handler for debug logs
         file_handler = logging.handlers.RotatingFileHandler(
-            log_file, maxBytes=5*1024*1024, backupCount=5, encoding='utf-8'
+            log_dir / 'gatekeeper.log',
+            maxBytes=10*1024*1024,  # 10MB
+            backupCount=5
         )
-        file_handler.setLevel(logging.INFO)
-        file_handler.setFormatter(detailed_formatter)
+        file_handler.setLevel(logging.DEBUG)
+        file_handler.setFormatter(logging.Formatter(
+            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        ))
         
-        # Console handler with simpler format
+        # Console handler for info and above
         console_handler = logging.StreamHandler()
         console_handler.setLevel(logging.INFO)
-        console_handler.setFormatter(console_formatter)
+        console_handler.setFormatter(logging.Formatter(
+            '%(levelname)s: %(message)s'
+        ))
         
-        # Add handlers to logger
         logger.addHandler(file_handler)
         logger.addHandler(console_handler)
-        
-        # Log startup message
-        logger.info("GateKeeper logging initialized")
         
         return logger
 
     def verify_dns(self, target: str) -> bool:
-        """
-        Verify DNS resolution for target with enhanced error handling.
+        """Verify DNS resolution for a target."""
+        config = self.config_manager.config
+        state = self.config_manager.state
         
-        Args:
-            target: Target hostname or IP address
-            
-        Returns:
-            bool: True if DNS resolution succeeds, False otherwise
-        """
-        # Check if target is already an IP address
         try:
-            ipaddress.ip_address(target)
-            self.logger.info(f"Target {target} is already an IP address, skipping DNS resolution")
-            return True
-        except ValueError:
-            # Not an IP address, proceed with DNS resolution
-            pass
+            # Try to resolve the target
+            resolver = dns.resolver.Resolver()
+            resolver.timeout = config.timeout
+            resolver.lifetime = config.timeout
             
-        try:
-            # First try simple hostname resolution
-            ip_address = socket.gethostbyname(target)
-            self.logger.info(f"DNS resolution successful for {target}: {ip_address}")
-            return True
-        except socket.gaierror as e:
-            # More detailed error handling based on error code
-            if e.errno == socket.EAI_NONAME:
-                self.logger.error(f"DNS resolution failed for {target}: Host not found")
-            elif e.errno == socket.EAI_AGAIN:
-                self.logger.error(f"DNS resolution failed for {target}: Temporary DNS server failure")
-            elif e.errno == socket.EAI_FAIL:
-                self.logger.error(f"DNS resolution failed for {target}: Non-recoverable DNS server failure")
-            else:
-                self.logger.error(f"DNS resolution failed for {target}: {e}")
-            
-            # Try alternative DNS lookup with dnspython as fallback
+            # Check if it's an IP address
             try:
-                resolver = dns.resolver.Resolver()
-                resolver.timeout = 2.0
-                resolver.lifetime = 4.0
-                answers = resolver.resolve(target, 'A')
-                if answers:
-                    ip_address = answers[0].address
-                    self.logger.info(f"Alternative DNS resolution successful for {target}: {ip_address}")
+                ipaddress.ip_address(target)
+                return True
+            except ValueError:
+                # Not an IP, try DNS resolution
+                try:
+                    resolver.resolve(target)
                     return True
-            except Exception as dns_error:
-                self.logger.error(f"Alternative DNS resolution also failed: {dns_error}")
-            
-            return False
+                except dns.resolver.NXDOMAIN:
+                    self.logger.error(f"DNS resolution failed: {target} does not exist")
+                    self.config_manager.update_state(
+                        error_count=state.error_count + 1
+                    )
+                    return False
+                except dns.resolver.Timeout:
+                    self.logger.error(f"DNS resolution timed out: {target}")
+                    self.config_manager.update_state(
+                        error_count=state.error_count + 1
+                    )
+                    return False
+                except dns.resolver.NoAnswer:
+                    self.logger.error(f"DNS resolution failed: No answer for {target}")
+                    self.config_manager.update_state(
+                        error_count=state.error_count + 1
+                    )
+                    return False
+                except Exception as e:
+                    self.logger.error(f"DNS resolution error for {target}: {str(e)}")
+                    self.config_manager.update_state(
+                        error_count=state.error_count + 1
+                    )
+                    return False
+                    
         except Exception as e:
-            self.logger.error(f"Unexpected error during DNS verification for {target}: {e}")
+            self.logger.error(f"Error verifying DNS for {target}: {str(e)}")
+            self.config_manager.update_state(
+                error_count=state.error_count + 1
+            )
             return False
+
+    def _scan_port(self, target: str, port: int, timeout: float, scan_type: str) -> Tuple[bool, Optional[str]]:
+        """Scan a single port."""
+        try:
+            if scan_type == "tcp":
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(timeout)
+                result = sock.connect_ex((target, port))
+                sock.close()
+                return result == 0, None
+            elif scan_type == "udp":
+                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                sock.settimeout(timeout)
+                try:
+                    sock.sendto(b'', (target, port))
+                    data, addr = sock.recvfrom(1024)
+                    sock.close()
+                    return True, None
+                except socket.timeout:
+                    sock.close()
+                    return False, None
+                except Exception as e:
+                    sock.close()
+                    return False, str(e)
+            else:
+                raise ValueError(f"Unsupported scan type: {scan_type}")
+        except Exception as e:
+            return False, str(e)
+
+    def _scan_with_progress(self, target: str, ports: List[int], scan_type: str = "tcp") -> Dict[str, Any]:
+        """Scan ports with progress tracking."""
+        config = self.config_manager.config
+        state = self.config_manager.state
+        
+        open_ports = []
+        closed_ports = []
+        filtered_ports = []
+        error_ports = []
+        
+        with tqdm(total=len(ports), desc="Scanning ports", unit="port") as progress:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=config.threads) as executor:
+                future_to_port = {
+                    executor.submit(
+                        self._scan_port,
+                        target,
+                        port,
+                        config.timeout,
+                        scan_type
+                    ): port for port in ports
+                }
+                
+                for future in concurrent.futures.as_completed(future_to_port):
+                    port = future_to_port[future]
+                    try:
+                        is_open, error = future.result()
+                        if is_open:
+                            open_ports.append(port)
+                        elif error:
+                            error_ports.append(port)
+                            self.logger.error(f"Error scanning port {port}: {error}")
+                            self.config_manager.update_state(
+                                error_count=state.error_count + 1
+                            )
+                        else:
+                            closed_ports.append(port)
+                    except Exception as e:
+                        error_ports.append(port)
+                        self.logger.error(f"Error scanning port {port}: {str(e)}")
+                        self.config_manager.update_state(
+                            error_count=state.error_count + 1
+                        )
+                    
+                    progress.update(1)
+                    self.config_manager.update_state(
+                        progress=progress.n / len(ports)
+                    )
+        
+        return {
+            "target": target,
+            "scan_id": state.scan_id,
+            "start_time": state.start_time.isoformat(),
+            "end_time": datetime.now().isoformat(),
+            "open_ports": open_ports,
+            "closed_ports": closed_ports,
+            "filtered_ports": filtered_ports,
+            "error_ports": error_ports,
+            "scan_type": scan_type,
+            "threads": config.threads,
+            "timeout": config.timeout
+        }
 
     async def scan_port(self, port: int) -> Optional[Dict]:
         """
@@ -444,712 +566,697 @@ class GateKeeper:
         except Exception as e:
             raise ValueError(f"Failed to decrypt results: {e}")
 
-    def _log_and_print(self, message: str, level: str = 'info', color: str = Fore.GREEN) -> None:
-        """
-        Log a message and print it to the console with color.
+    def _log_and_print(self, message: str, level: str = 'info', color: str = None) -> None:
+        """Log a message and optionally print it with color."""
+        # Log the message
+        log_level = getattr(logging, level.upper())
+        self.logger.log(log_level, message)
         
-        Args:
-            message: The message to log and print
-            level: The log level ('info', 'warning', 'error')
-            color: The color to use for the console output
-        """
-        if level == 'info':
-            self.logger.info(message)
-        elif level == 'warning':
-            self.logger.warning(message)
-        elif level == 'error':
-            self.logger.error(message)
-        
-        print(f"{color}{message}{Style.RESET_ALL}")
+        # Print with color if specified
+        if color:
+            print(f"{color}{message}{Style.RESET_ALL}")
+        else:
+            print(message)
 
-    def _save_json_results(self, results: List[Dict], filename: str, encrypt: bool) -> Dict[str, Any]:
-        """
-        Save scan results in JSON format.
-        
-        Args:
-            results: Scan results to save
-            filename: Base filename (without extension)
-            encrypt: Whether to encrypt the results
-            
-        Returns:
-            Dict[str, Any]: The JSON data structure containing scan info and results
-        """
-        json_file = f"{filename}.json"
-        json_data = {
-            "scan_info": {
-                "target": self.target,
-                "timestamp": datetime.now().isoformat(),
-                "ports_scanned": len(self.ports),
-                "open_ports_found": len(results),
-                "scan_duration": time.time() - self.start_time if self.start_time else 0
-            },
-            "results": results
-        }
+    def _save_results(self, results: Dict[str, Any]) -> None:
+        """Save scan results in configured formats."""
+        config = self.config_manager.config
+        state = self.config_manager.state
         
         try:
-            with self._open_file(json_file, 'w', encoding='utf-8') as f:
-                json.dump(json_data, f, indent=2)
+            # Ensure output directory exists
+            output_dir = Path(config.output_dir)
+            output_dir.mkdir(parents=True, exist_ok=True)
             
-            if encrypt:
-                self._encrypt_file(json_file)
-                self._log_and_print(f"Results saved and encrypted to {json_file}.enc")
-            else:
-                self._log_and_print(f"Results saved to {json_file}")
-        except (IOError, PermissionError) as e:
-            self._log_and_print(f"Error saving results to {json_file}: {e}", level='error', color=Fore.RED)
-        
-        return json_data  # Always return the data structure for potential use by other functions
-
-    def _save_csv_results(self, results: List[Dict], filename: str) -> str:
-        """
-        Save scan results in CSV format.
-        
-        Args:
-            results: Scan results to save
-            filename: Base filename (without extension)
-            
-        Returns:
-            str: Path to the saved file
-        """
-        csv_file = f"{filename}.csv"
-        try:
-            with self._open_file(csv_file, 'w', newline='', encoding='utf-8') as f:
-                # Determine all possible fields from results
-                fieldnames = ['port', 'state', 'service', 'version']
-                
-                # Check if we have vulnerability data
-                has_vulns = any('vulnerabilities' in result for result in results)
-                if has_vulns:
-                    fieldnames.extend(['vuln_id', 'severity', 'description'])
-                
-                writer = csv.DictWriter(f, fieldnames=fieldnames)
-                writer.writeheader()
-                
-                for result in results:
-                    # Base row with port information
-                    row = {
-                        'port': result.get('port', ''),
-                        'state': result.get('state', ''),
-                        'service': result.get('service', ''),
-                        'version': result.get('version', '')
-                    }
-                    
-                    # If no vulnerabilities, write the row as is
-                    if not has_vulns or 'vulnerabilities' not in result or not result['vulnerabilities']:
-                        writer.writerow(row)
-                    else:
-                        # Write a row for each vulnerability
-                        for vuln in result['vulnerabilities']:
-                            vuln_row = row.copy()
-                            vuln_row['vuln_id'] = vuln.get('id', '')
-                            vuln_row['severity'] = vuln.get('severity', '')
-                            vuln_row['description'] = vuln.get('description', '')
-                            writer.writerow(vuln_row)
-            
-            self._log_and_print(f"Results saved to {csv_file}")
-        except (IOError, PermissionError) as e:
-            self._log_and_print(f"Error saving results to {csv_file}: {e}", level='error', color=Fore.RED)
-            
-        return csv_file
-    
-    def _save_html_results(self, results: List[Dict], filename: str) -> str:
-        """
-        Save scan results in HTML format.
-        
-        Args:
-            results: Scan results to save
-            filename: Base filename (without extension)
-            
-        Returns:
-            str: Path to the saved file
-        """
-        html_file = f"{filename}.html"
-        # Create a simple HTML report
-        html_content = f"""<!DOCTYPE html>
-<html>
-<head>
-    <title>GateKeeper Scan Report - {html.escape(self.target)}</title>
-    <style>
-        body {{ font-family: Arial, sans-serif; margin: 20px; }}
-        h1, h2 {{ color: #2c3e50; }}
-        table {{ border-collapse: collapse; width: 100%; margin-bottom: 20px; }}
-        th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
-        th {{ background-color: #f2f2f2; }}
-        tr:nth-child(even) {{ background-color: #f9f9f9; }}
-        .critical {{ color: #e74c3c; font-weight: bold; }}
-        .high {{ color: #e67e22; font-weight: bold; }}
-        .medium {{ color: #f1c40f; }}
-        .low {{ color: #27ae60; }}
-        .footer {{ margin-top: 30px; font-size: 0.8em; color: #7f8c8d; }}
-    </style>
-</head>
-<body>
-    <h1>GateKeeper Scan Report</h1>
-    <p><strong>Target:</strong> {html.escape(self.target)}</p>
-    <p><strong>Scan Date:</strong> {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</p>
-    <p><strong>Open Ports:</strong> {len(results)} out of {len(self.ports)} scanned</p>
-    
-    <h2>Open Ports</h2>
-    <table>
-        <tr>
-            <th>Port</th>
-            <th>State</th>
-            <th>Service</th>
-            <th>Version</th>
-        </tr>
-"""
-        
-        # Add rows for each open port
-        for result in results:
-            port = result.get('port', '')
-            state = result.get('state', '')
-            service = result.get('service', '')
-            version = result.get('version', '')
-            
-            html_content += f"""        <tr>
-            <td>{port}</td>
-            <td>{state}</td>
-            <td>{service}</td>
-            <td>{html.escape(str(version))}</td>
-        </tr>
-"""
-        
-        # Check if we have vulnerability data
-        has_vulns = any('vulnerabilities' in result and result['vulnerabilities'] for result in results)
-        if has_vulns:
-            html_content += """    </table>
-    
-    <h2>Potential Vulnerabilities</h2>
-    <table>
-        <tr>
-            <th>Port</th>
-            <th>Service</th>
-            <th>Severity</th>
-            <th>CVE ID</th>
-            <th>Description</th>
-        </tr>
-"""
-            
-            # Add rows for each vulnerability
-            for result in results:
-                if 'vulnerabilities' in result and result['vulnerabilities']:
-                    port = result.get('port', '')
-                    service = result.get('service', '')
-                    
-                    for vuln in result['vulnerabilities']:
-                        severity = vuln.get('severity', '')
-                        vuln_id = vuln.get('id', '')
-                        description = vuln.get('description', '')
-                        
-                        # Add CSS class based on severity
-                        severity_class = severity.lower() if severity.lower() in ['critical', 'high', 'medium', 'low'] else ''
-                        
-                        html_content += f"""        <tr>
-            <td>{port}</td>
-            <td>{service}</td>
-            <td class="{severity_class}">{severity}</td>
-            <td>{vuln_id}</td>
-            <td>{html.escape(description)}</td>
-        </tr>
-"""
-        
-        # Close the HTML document
-        html_content += """    </table>
-    
-    <div class="footer">
-        <p>Generated by GateKeeper Network Security Scanner</p>
-    </div>
-</body>
-</html>
-"""
-        
-        try:
-            with self._open_file(html_file, 'w', encoding='utf-8') as f:
-                f.write(html_content)
-            
-            self._log_and_print(f"Results saved to {html_file}")
-        except (IOError, PermissionError) as e:
-            self._log_and_print(f"Error saving results to {html_file}: {e}", level='error', color=Fore.RED)
-            
-        return html_file
-
-    def save_results(self, results, filename=None, encrypt=True, format='json', notify=False):
-        """
-        Save scan results to a file in the specified format.
-        Supports JSON, CSV, and HTML formats.
-        
-        Args:
-            results: Scan results to save
-            filename: Output filename (without extension)
-            encrypt: Whether to encrypt the results
-            format: Output format (json, csv, html, all)
-            notify: Whether to send notifications
-            
-        Returns:
-            bool: True if successful, False otherwise
-        """
-        if not results:
-            self.logger.warning("No results to save")
-            return False
-        
-        if not filename:
+            # Generate filename with timestamp
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"gatekeeper_scan_{timestamp}"
-        
-        # Remove any extension from the filename
-        filename = os.path.splitext(filename)[0]
-        
-        try:
-            # Create the JSON data structure for potential notifications, regardless of selected format
-            json_data = {
-                "scan_info": {
-                    "target": self.target,
-                    "timestamp": datetime.now().isoformat(),
-                    "ports_scanned": len(self.ports),
-                    "open_ports_found": len(results),
-                    "scan_duration": time.time() - self.start_time if self.start_time else 0
-                },
-                "results": results
-            }
+            base_filename = f"gatekeeper_scan_{timestamp}"
             
-            # Process each requested format
-            if format in ['json', 'all']:
-                # Use _save_json_results to save the file, but we already have the data structure
-                self._save_json_results(results, filename, encrypt)
+            # Save in each configured format
+            for format in config.export_formats:
+                try:
+                    if format == "json":
+                        self._save_json_results(results, output_dir / f"{base_filename}.json")
+                    elif format == "csv":
+                        self._save_csv_results(results, output_dir / f"{base_filename}.csv")
+                    elif format == "html":
+                        self._save_html_results(results, output_dir / f"{base_filename}.html")
+                    else:
+                        self.logger.warning(f"Unsupported export format: {format}")
+                except Exception as e:
+                    self.logger.error(f"Error saving {format} results: {str(e)}")
+                    self.config_manager.update_state(
+                        error_count=state.error_count + 1
+                    )
             
-            if format in ['csv', 'all']:
-                self._save_csv_results(results, filename)
+            self.logger.info(f"Results saved to {output_dir}")
             
-            if format in ['html', 'all']:
-                self._save_html_results(results, filename)
-            
-            # Process notifications if enabled
-            if notify:
-                self.process_notifications(json_data)
-            
-            return True
-        
         except Exception as e:
-            self._log_and_print(f"Error saving results: {e}", level='error', color=Fore.RED)
-            return False
+            self.logger.error(f"Error saving results: {str(e)}")
+            self.config_manager.update_state(
+                error_count=state.error_count + 1
+            )
+            raise
 
-    async def _scan_with_semaphore(self, semaphore: asyncio.Semaphore, port: int) -> Optional[Dict]:
-        """
-        Scan a single port with rate limiting and timeout, using a semaphore to limit concurrent connections.
-        
-        Args:
-            semaphore: Semaphore to limit concurrent connections
-            port: Port number to scan
-            
-        Returns:
-            Optional[Dict]: Scan result if the port is open, None otherwise
-        """
-        async with semaphore:
-            return await self.scan_port(port)
+    def _save_json_results(self, results: Dict[str, Any], filepath: Path) -> None:
+        """Save results in JSON format."""
+        with self._open_file(filepath, 'w') as f:
+            json.dump(results, f, indent=2)
+        self.logger.debug(f"Saved JSON results to {filepath}")
 
-    async def scan_ports(self, ports: List[int]) -> List[Dict]:
-        """
-        Scan a list of ports using asyncio and rate limiting with progress tracking.
+    def _save_csv_results(self, results: Dict[str, Any], filepath: Path) -> None:
+        """Save results in CSV format."""
+        with self._open_file(filepath, 'w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(['Port', 'Status'])
+            for port in results['open_ports']:
+                writer.writerow([port, 'Open'])
+            for port in results['closed_ports']:
+                writer.writerow([port, 'Closed'])
+            for port in results['filtered_ports']:
+                writer.writerow([port, 'Filtered'])
+            for port in results['error_ports']:
+                writer.writerow([port, 'Error'])
+        self.logger.debug(f"Saved CSV results to {filepath}")
+
+    def _save_html_results(self, results: Dict[str, Any], filepath: Path) -> None:
+        """Save results in HTML format."""
+        with self._open_file(filepath, 'w') as f:
+            f.write('<!DOCTYPE html>\n<html>\n<head>\n')
+            f.write('<title>GateKeeper Scan Results</title>\n')
+            f.write('<style>\n')
+            f.write('body { font-family: Arial, sans-serif; margin: 20px; }\n')
+            f.write('table { border-collapse: collapse; width: 100%; }\n')
+            f.write('th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }\n')
+            f.write('th { background-color: #f2f2f2; }\n')
+            f.write('</style>\n')
+            f.write('</head>\n<body>\n')
+            
+            f.write(f'<h1>GateKeeper Scan Results</h1>\n')
+            f.write(f'<p>Target: {html.escape(results["target"])}</p>\n')
+            f.write(f'<p>Scan ID: {html.escape(results["scan_id"])}</p>\n')
+            f.write(f'<p>Start Time: {html.escape(results["start_time"])}</p>\n')
+            f.write(f'<p>End Time: {html.escape(results["end_time"])}</p>\n')
+            
+            f.write('<h2>Port Status</h2>\n')
+            f.write('<table>\n')
+            f.write('<tr><th>Port</th><th>Status</th></tr>\n')
+            
+            for port in results['open_ports']:
+                f.write(f'<tr><td>{port}</td><td style="color: green;">Open</td></tr>\n')
+            for port in results['closed_ports']:
+                f.write(f'<tr><td>{port}</td><td style="color: red;">Closed</td></tr>\n')
+            for port in results['filtered_ports']:
+                f.write(f'<tr><td>{port}</td><td style="color: orange;">Filtered</td></tr>\n')
+            for port in results['error_ports']:
+                f.write(f'<tr><td>{port}</td><td style="color: gray;">Error</td></tr>\n')
+            
+            f.write('</table>\n')
+            f.write('</body>\n</html>\n')
         
-        Args:
-            ports: List of port numbers to scan
-            
-        Returns:
-            List[Dict]: List of scan results
-        """
-        if not ports:
-            self.logger.warning("No ports to scan")
-            return []
-            
-        # Setup semaphore for concurrency control
-        semaphore = asyncio.Semaphore(self.threads)
-        
-        # Setup progress display
-        total_ports = len(ports)
-        self.logger.info(f"Starting scan of {total_ports} ports with {self.threads} concurrent threads")
-        
-        # Create progress bar
-        progress = tqdm(total=total_ports, desc="Scanning ports", unit="port")
-        
-        # Results collection
-        results = []
-        
-        # Process ports in chunks to update progress bar
-        chunk_size = min(500, total_ports)  # Process in reasonable chunks
-        for i in range(0, total_ports, chunk_size):
-            chunk = ports[i:i + chunk_size]
-            
-            # Create tasks for this chunk
-            tasks = [self._scan_with_semaphore(semaphore, port) for port in chunk]
-            
-            # Process tasks concurrently
-            chunk_results = await asyncio.gather(*tasks)
-            
-            # Filter valid results and add to results list
-            valid_results = [result for result in chunk_results if result is not None]
-            results.extend(valid_results)
-            
-            # Update progress bar
-            progress.update(len(chunk))
-            
-        # Close progress bar
-        progress.close()
-        
-        self.logger.info(f"Scan completed: {len(results)} open ports found out of {total_ports} ports scanned")
-        return results
+        self.logger.debug(f"Saved HTML results to {filepath}")
 
     def compare_reports(self, report1: str, report2: str) -> None:
-        """
-        Compare two scan reports and display the differences.
+        """Compare two scan reports."""
+        config = self.config_manager.config
+        state = self.config_manager.state
         
-        Args:
-            report1: Path to the first report file
-            report2: Path to the second report file
-        """
-        comparer = ReportComparer(report1, report2)
-        comparer.compare_reports()
+        try:
+            # Load the reports
+            report1_path = Path(report1)
+            report2_path = Path(report2)
+            
+            if not report1_path.exists() or not report2_path.exists():
+                self.logger.error("One or both report files do not exist")
+                self.config_manager.update_state(
+                    error_count=state.error_count + 1
+                )
+                return
+            
+            # Read and parse the reports
+            report1_data = json.loads(self._read_file(report1_path))
+            report2_data = json.loads(self._read_file(report2_path))
+            
+            if not report1_data or not report2_data:
+                self.logger.error("Failed to parse one or both reports")
+                self.config_manager.update_state(
+                    error_count=state.error_count + 1
+                )
+                return
+            
+            # Compare the reports
+            differences = self.report_comparer.compare_reports(report1_data, report2_data)
+            
+            # Display the differences
+            if differences:
+                self.logger.info("Report differences found:")
+                for diff in differences:
+                    self.logger.info(f"- {diff}")
+            else:
+                self.logger.info("No differences found between reports")
+            
+        except Exception as e:
+            self.logger.error(f"Error comparing reports: {str(e)}")
+            self.config_manager.update_state(
+                error_count=state.error_count + 1
+            )
 
     def list_available_reports(self) -> None:
-        """
-        List available scan reports in the reports directory.
-        """
-        reports = find_latest_reports(self.reports_dir)
-        if not reports:
-            self._log_and_print("No scan reports found in the reports directory.", color=Fore.YELLOW)
-        else:
-            self._log_and_print("Available scan reports:")
-            for report in reports:
-                print(f"  - {report}")
-
-    def analyze_port_behavior(self, report_path: str) -> None:
-        """
-        Analyze port behavior from a scan report.
+        """List available scan reports."""
+        config = self.config_manager.config
+        state = self.config_manager.state
         
-        Args:
-            report_path: Path to the scan report file
-        """
-        analyzer = PortBehaviorAnalyzer(report_path)
-        analyzer.analyze_port_behavior()
+        try:
+            # Get the reports directory
+            reports_dir = Path(config.output_dir)
+            if not reports_dir.exists():
+                self.logger.error("Reports directory does not exist")
+                self.config_manager.update_state(
+                    error_count=state.error_count + 1
+                )
+                return
+            
+            # List all report files
+            report_files = []
+            for ext in ['.json', '.csv', '.html']:
+                report_files.extend(reports_dir.glob(f'*{ext}'))
+            
+            if not report_files:
+                self.logger.info("No reports found")
+                return
+            
+            # Display the reports
+            self.logger.info("Available reports:")
+            for report in sorted(report_files):
+                self.logger.info(f"- {report.name}")
+            
+        except Exception as e:
+            self.logger.error(f"Error listing reports: {str(e)}")
+            self.config_manager.update_state(
+                error_count=state.error_count + 1
+            )
+
+    def analyze_port_behavior(self, report_file: str) -> None:
+        """Analyze port behavior from a scan report."""
+        config = self.config_manager.config
+        state = self.config_manager.state
+        
+        try:
+            # Load the report
+            report_path = Path(report_file)
+            if not report_path.exists():
+                self.logger.error(f"Report file not found: {report_file}")
+                self.config_manager.update_state(
+                    error_count=state.error_count + 1
+                )
+                return
+            
+            # Read and parse the report
+            report_data = json.loads(self._read_file(report_path))
+            if not report_data:
+                self.logger.error("Failed to parse report")
+                self.config_manager.update_state(
+                    error_count=state.error_count + 1
+                )
+                return
+            
+            # Analyze port behavior
+            analysis = self.port_analyzer.analyze(report_data)
+            
+            # Display the analysis
+            if analysis:
+                self.logger.info("Port behavior analysis:")
+                for item in analysis:
+                    self.logger.info(f"- {item}")
+            else:
+                self.logger.info("No significant port behavior patterns found")
+            
+        except Exception as e:
+            self.logger.error(f"Error analyzing port behavior: {str(e)}")
+            self.config_manager.update_state(
+                error_count=state.error_count + 1
+            )
 
     def _validate_port(self, port: int, context: str = None) -> None:
-        """
-        Validate that a port number is within the valid range (0-65535).
+        """Validate a port number."""
+        config = self.config_manager.config
+        state = self.config_manager.state
         
-        Args:
-            port: The port number to validate
-            context: Optional context for error message
+        try:
+            if not isinstance(port, int):
+                raise ValueError(f"Port must be an integer, got {type(port)}")
             
-        Raises:
-            ValueError: If the port number is invalid
-        """
-        if port < 0:
-            raise ValueError(f"Port number cannot be negative: {context or port}")
-        if port > 65535:
-            raise ValueError(f"Port number must be between 0 and 65535: {context or port}")
+            if port < 1 or port > 65535:
+                raise ValueError(f"Port must be between 1 and 65535, got {port}")
+            
+            # Check if port is in restricted range
+            if port < 1024:
+                self.logger.warning(f"Port {port} is in the restricted range (1-1023)")
+                self.config_manager.update_state(
+                    warning_count=state.warning_count + 1
+                )
+            
+        except Exception as e:
+            error_msg = f"Invalid port {port}"
+            if context:
+                error_msg += f" in {context}"
+            self.logger.error(f"{error_msg}: {str(e)}")
+            self.config_manager.update_state(
+                error_count=state.error_count + 1
+            )
+            raise
 
     def parse_ports(self, ports: str) -> List[int]:
-        """
-        Parse a string of port numbers and ranges into a list of integers.
+        """Parse a string of ports into a list of integers."""
+        config = self.config_manager.config
+        state = self.config_manager.state
         
-        Args:
-            ports: String of port numbers and ranges (e.g. "80,443,8000-8010")
+        try:
+            result = []
             
-        Returns:
-            List[int]: List of unique port numbers
-            
-        Raises:
-            ValueError: If the port specification is invalid
-        """
-        port_list = []
-        
-        if not ports or not ports.strip():
-            raise ValueError("Port specification cannot be empty")
-            
-        for part in ports.split(','):
-            part = part.strip()
-            if not part:
-                continue
-                
-            try:
+            # Split by commas and process each part
+            for part in ports.split(','):
+                part = part.strip()
                 if '-' in part:
                     # Handle port range
-                    start_str, end_str = part.split('-', 1)
-                    start, end = int(start_str.strip()), int(end_str.strip())
-                    
-                    # Validate port range
-                    self._validate_port(start, part)
-                    self._validate_port(end, part)
-                    
+                    start, end = map(int, part.split('-'))
                     if start > end:
-                        raise ValueError(f"Invalid port range (start > end): {part}")
-                        
-                    port_list.extend(range(start, end + 1))
+                        raise ValueError(f"Invalid port range: {start}-{end}")
+                    for port in range(start, end + 1):
+                        self._validate_port(port, f"range {start}-{end}")
+                        result.append(port)
                 else:
                     # Handle single port
                     port = int(part)
                     self._validate_port(port)
-                    port_list.append(port)
-            except ValueError as e:
-                # Check if this is our custom error message
-                if str(e).startswith("Port ") or str(e).startswith("Invalid port"):
-                    raise
-                # Otherwise, it's likely a conversion error
-                raise ValueError(f"Invalid port specification: {part}")
-                
-        if not port_list:
-            raise ValueError("No valid ports specified")
+                    result.append(port)
             
-        return sorted(set(port_list))
+            # Remove duplicates and sort
+            result = sorted(set(result))
+            
+            # Update configuration
+            self.config_manager.update_config(ports=result)
+            
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"Error parsing ports: {str(e)}")
+            self.config_manager.update_state(
+                error_count=state.error_count + 1
+            )
+            raise
 
     def _load_scan_policy(self, policy_name: str) -> None:
-        """
-        Load and apply scan policy configuration.
+        """Load a scan policy."""
+        config = self.config_manager.config
+        state = self.config_manager.state
         
-        Args:
-            policy_name: Name of the policy to load
-        """
-        if policy_name:
-            policy_manager = get_policy_manager()
-            policy_config = policy_manager.load_policy(policy_name)
-            if policy_config:
-                self.threads = policy_config.get('threads', self.threads)
-                self.timeout = policy_config.get('timeout', self.timeout)
-                self.rate_limit = policy_config.get('rate_limit', self.rate_limit)
-                self.max_scan_rate = policy_config.get('max_scan_rate', self.max_scan_rate)
-
-    def _load_target_group(self, group_name: str) -> Tuple[str, List[int]]:
-        """
-        Load target group configuration.
-        
-        Args:
-            group_name: Name of the target group to load
-            
-        Returns:
-            Tuple[str, List[int]]: Target and ports from group config
-        """
-        if group_name:
-            target_groups = get_target_groups()
-            group_config = target_groups.load_group(group_name)
-            if group_config:
-                return (
-                    group_config.get('target', self.target),
-                    group_config.get('ports', self.ports)
-                )
-        return self.target, self.ports
-
-    def scan(self, target: str, ports: List[int], policy: str = None, group: str = None, notify: bool = False) -> None:
-        """
-        Run a network scan on the specified target and ports.
-        
-        Args:
-            target: Target IP address or hostname
-            ports: List of port numbers to scan
-            policy: Scan policy name (optional)
-            group: Target group name (optional)
-            notify: Whether to send notifications (optional)
-        """
-        self.target = target
-        self.ports = ports
-        
-        # Load scan policy and target group configurations
-        self._load_scan_policy(policy)
-        self.target, self.ports = self._load_target_group(group)
-        
-        # Verify DNS resolution
-        if not self.verify_dns(self.target):
-            self._log_and_print(f"DNS verification failed for {self.target}. Exiting.", level='error', color=Fore.RED)
-            return
-        
-        # Display scan start banner
-        display_scan_start(self.target, self.ports)
-        
-        # Run the scan
-        self.start_time = time.time()
-        results = asyncio.run(self.scan_ports(self.ports))
-        
-        # Display scan complete banner
-        display_scan_complete(self.target, self.ports, results, time.time() - self.start_time)
-        
-        # Save results
-        self.save_results(results, notify=notify)
-
-    def process_notifications(self, scan_results: Dict[str, Any]) -> None:
-        """
-        Process scan results and send notifications based on configured rules.
-        
-        Args:
-            scan_results: The scan results to process
-        """
         try:
-            notification_manager = get_notification_manager()
-            if not notification_manager:
-                self.logger.error("Failed to initialize notification manager")
+            if not policy_name:
                 return
             
-            self.logger.info("Processing notifications for scan results")
+            # Load the policy
+            policy_config = self.policy_manager.load_policy(policy_name)
+            if not policy_config:
+                self.logger.error(f"Policy not found: {policy_name}")
+                self.config_manager.update_state(
+                    error_count=state.error_count + 1
+                )
+                return
             
-            # Process notifications - this will check rules and send notifications
-            notification_results = notification_manager.process_scan_results(scan_results)
+            # Update configuration with policy settings
+            self.config_manager.update_config(**policy_config)
+            self.logger.info(f"Loaded policy: {policy_name}")
             
-            # Log notification results
-            if notification_results.get('notification_sent', False):
-                self._log_and_print("Notifications sent for scan results")
-                
-                # Log triggered rules
-                for rule in notification_results.get('rules_triggered', []):
-                    rule_name = rule.get('rule_name', 'Unknown rule')
-                    severity = rule.get('severity', 'info').upper()
-                    severity_color = Fore.RED if severity == 'CRITICAL' else Fore.YELLOW if severity == 'WARNING' else Fore.CYAN
-                    print(f"  {severity_color}[{severity}]{Style.RESET_ALL} Rule triggered: {rule_name}")
-            else:
-                self._log_and_print("No notifications were sent (no rules triggered or notifications disabled)", color=Fore.YELLOW)
-        
         except Exception as e:
-            self._log_and_print(f"Error processing notifications: {e}", level='error', color=Fore.RED)
+            self.logger.error(f"Error loading policy {policy_name}: {str(e)}")
+            self.config_manager.update_state(
+                error_count=state.error_count + 1
+            )
+            raise
 
-    def _read_file(self, file_path: str, binary: bool = False) -> Union[str, bytes, None]:
-        """
-        Safely read the contents of a file using the file context manager.
-        
-        Args:
-            file_path: Path to the file to read
-            binary: Whether to read in binary mode
-            
-        Returns:
-            Union[str, bytes, None]: File contents as string (text mode) or bytes (binary mode),
-                                    or None if the file couldn't be read
-        """
-        mode = 'rb' if binary else 'r'
-        encoding = None if binary else 'utf-8'
+    def _load_target_group(self, group_name: str) -> Tuple[str, List[int]]:
+        """Load a target group."""
+        config = self.config_manager.config
+        state = self.config_manager.state
         
         try:
-            with self._open_file(file_path, mode, encoding=encoding) as f:
+            if not group_name:
+                return None, []
+            
+            # Load the group
+            group_config = self.target_groups.load_group(group_name)
+            if not group_config:
+                self.logger.error(f"Group not found: {group_name}")
+                self.config_manager.update_state(
+                    error_count=state.error_count + 1
+                )
+                return None, []
+            
+            # Update configuration with group settings
+            self.config_manager.update_config(**group_config)
+            self.logger.info(f"Loaded group: {group_name}")
+            
+            return group_config.get('target'), group_config.get('ports', [])
+            
+        except Exception as e:
+            self.logger.error(f"Error loading group {group_name}: {str(e)}")
+            self.config_manager.update_state(
+                error_count=state.error_count + 1
+            )
+            raise
+
+    def scan_target(self, target: str, ports: List[int], threads: int = 100, timeout: float = 1.0,
+                   scan_type: str = "tcp", policy_name: Optional[str] = None,
+                   group_name: Optional[str] = None) -> Dict[str, Any]:
+        """Scan a target for open ports."""
+        try:
+            # Update configuration
+            self.config_manager.update_config(
+                target=target,
+                ports=ports,
+                threads=threads,
+                timeout=timeout,
+                scan_type=scan_type
+            )
+            
+            # Validate configuration
+            if not self.config_manager.validate_target(target):
+                raise ValueError(f"Invalid target: {target}")
+            if not self.config_manager.validate_ports(ports):
+                raise ValueError("Invalid port range")
+            
+            # Load policy if specified
+            if policy_name:
+                self._load_scan_policy(policy_name)
+            
+            # Load target group if specified
+            if group_name:
+                group_config = self.target_groups.load_group(group_name)
+                if group_config:
+                    self.config_manager.update_config(**group_config)
+            
+            # Initialize scan state
+            self.config_manager.update_state(
+                start_time=datetime.now(),
+                scan_id=f"scan_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+                status="running"
+            )
+            
+            display_scan_start(target, ports)
+            self.logger.info(f"Starting scan of {target} on ports {ports}")
+            
+            # Perform the scan
+            results = self._perform_scan()
+            
+            # Update scan state
+            self.config_manager.update_state(
+                end_time=datetime.now(),
+                results=results,
+                status="completed"
+            )
+            
+            # Save results
+            self._save_results(results)
+            
+            # Process notifications
+            self._process_notifications(results)
+            
+            display_scan_complete()
+            self.logger.info("Scan completed successfully")
+            
+            return results
+            
+        except Exception as e:
+            self.config_manager.update_state(
+                status="failed",
+                error_count=self.config_manager.state.error_count + 1
+            )
+            self.logger.error(f"Scan failed: {str(e)}")
+            raise
+
+    def _perform_scan(self) -> Dict[str, Any]:
+        """Perform the actual port scan."""
+        config = self.config_manager.config
+        state = self.config_manager.state
+        
+        open_ports = []
+        closed_ports = []
+        filtered_ports = []
+        error_ports = []
+        
+        with concurrent.futures.ThreadPoolExecutor(max_workers=config.threads) as executor:
+            future_to_port = {
+                executor.submit(
+                    self._scan_port,
+                    config.target,
+                    port,
+                    config.timeout,
+                    config.scan_type
+                ): port for port in config.ports
+            }
+            
+            for future in concurrent.futures.as_completed(future_to_port):
+                port = future_to_port[future]
+                try:
+                    result = future.result()
+                    if result[0]:  # port is open
+                        open_ports.append(port)
+                    else:
+                        closed_ports.append(port)
+                except Exception as e:
+                    self.logger.error(f"Error scanning port {port}: {str(e)}")
+                    error_ports.append(port)
+                    self.config_manager.update_state(
+                        error_count=state.error_count + 1
+                    )
+                
+                # Update progress
+                progress = (len(open_ports) + len(closed_ports) + len(error_ports)) / len(config.ports)
+                self.config_manager.update_state(progress=progress)
+        
+        return {
+            "target": config.target,
+            "scan_id": state.scan_id,
+            "start_time": state.start_time.isoformat(),
+            "end_time": datetime.now().isoformat(),
+            "open_ports": open_ports,
+            "closed_ports": closed_ports,
+            "filtered_ports": filtered_ports,
+            "error_ports": error_ports,
+            "scan_type": config.scan_type,
+            "threads": config.threads,
+            "timeout": config.timeout
+        }
+
+    def _process_notifications(self, scan_results: Dict[str, Any]) -> None:
+        """Process notifications based on scan results."""
+        config = self.config_manager.config
+        state = self.config_manager.state
+        
+        try:
+            if not self.notification_manager:
+                self.logger.error("Notification manager not initialized")
+                return
+            
+            # Process notifications - this will check rules and send notifications
+            notification_results = self.notification_manager.process_scan_results(scan_results)
+            
+            # Log notification results
+            for result in notification_results:
+                if result.get('success'):
+                    self.logger.info(f"Notification sent: {result.get('message')}")
+                else:
+                    self.logger.error(f"Notification failed: {result.get('error')}")
+                    self.config_manager.update_state(
+                        error_count=state.error_count + 1
+                    )
+            
+        except Exception as e:
+            self.logger.error(f"Error processing notifications: {str(e)}")
+            self.config_manager.update_state(
+                error_count=state.error_count + 1
+            )
+
+    @contextlib.contextmanager
+    def _open_file(self, filepath: Union[str, Path], mode: str = 'r', **kwargs) -> Iterator[Union[TextIO, BinaryIO]]:
+        """Context manager for file operations."""
+        filepath = Path(filepath)
+        try:
+            # Create parent directories for write operations
+            if 'w' in mode or 'a' in mode:
+                filepath.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Open the file
+            with open(filepath, mode, **kwargs) as f:
+                yield f
+                
+        except FileNotFoundError:
+            self.logger.error(f"File not found: {filepath}")
+            self.config_manager.update_state(
+                error_count=self.config_manager.state.error_count + 1
+            )
+            raise
+        except PermissionError:
+            self.logger.error(f"Permission denied: {filepath}")
+            self.config_manager.update_state(
+                error_count=self.config_manager.state.error_count + 1
+            )
+            raise
+        except IOError as e:
+            self.logger.error(f"IO error: {str(e)}")
+            self.config_manager.update_state(
+                error_count=self.config_manager.state.error_count + 1
+            )
+            raise
+
+    def _read_file(self, filepath: Union[str, Path], binary: bool = False) -> Union[str, bytes, None]:
+        """Read a file's contents."""
+        try:
+            mode = 'rb' if binary else 'r'
+            with self._open_file(filepath, mode) as f:
                 return f.read()
-        except (FileNotFoundError, PermissionError, IOError) as e:
-            self._log_and_print(f"Error reading file {file_path}: {e}", level='error', color=Fore.RED)
+        except Exception as e:
+            self.logger.error(f"Error reading file {filepath}: {str(e)}")
+            self.config_manager.update_state(
+                error_count=self.config_manager.state.error_count + 1
+            )
             return None
 
-    def main(self) -> None:
-        """
-        Main entry point for the GateKeeper application.
-        Uses argparse subcommands for better organization of different functionality.
-        """
-        parser = argparse.ArgumentParser(
-            description="GateKeeper Network Security Scanner",
-            formatter_class=argparse.RawDescriptionHelpFormatter,
-            epilog="Example usage:\n"
-                   "  Scan a target:                 gatekeeper.py scan --target example.com --ports 80,443\n"
-                   "  Use a scan policy:             gatekeeper.py scan --target example.com --policy quick\n"
-                   "  Scan a target group:           gatekeeper.py scan --group web_servers\n"
-                   "  Compare two reports:           gatekeeper.py compare report1.json report2.json\n"
-                   "  Export a report:               gatekeeper.py export report.json\n"
-                   "  Analyze port behavior:         gatekeeper.py analyze report.json\n"
-                   "  List available reports:        gatekeeper.py reports list\n"
-                   "  List available policies:       gatekeeper.py policies list\n"
-                   "  List available target groups:  gatekeeper.py groups list\n"
-        )
+    def _write_file(self, filepath: Union[str, Path], content: Union[str, bytes], binary: bool = False) -> bool:
+        """Write content to a file."""
+        try:
+            mode = 'wb' if binary else 'w'
+            with self._open_file(filepath, mode) as f:
+                f.write(content)
+            return True
+        except Exception as e:
+            self.logger.error(f"Error writing file {filepath}: {str(e)}")
+            self.config_manager.update_state(
+                error_count=self.config_manager.state.error_count + 1
+            )
+            return False
+
+    def _configure_notifications(self, config: Dict[str, Any]) -> None:
+        """Configure notifications."""
+        state = self.config_manager.state
         
-        # Create subparsers
-        subparsers = parser.add_subparsers(dest="command", help="Command to execute")
+        try:
+            if not config:
+                return
+            
+            # Update notification configuration
+            self.config_manager.update_config(notification_config=config)
+            
+            # Initialize notification manager
+            self.notification_manager = get_notification_manager()
+            if not self.notification_manager:
+                self.logger.error("Failed to initialize notification manager")
+                self.config_manager.update_state(
+                    error_count=state.error_count + 1
+                )
+                return
+            
+            self.logger.info("Configured notifications")
+            
+        except Exception as e:
+            self.logger.error(f"Error configuring notifications: {str(e)}")
+            self.config_manager.update_state(
+                error_count=state.error_count + 1
+            )
+            raise
+
+    def main(self) -> None:
+        """Main entry point for the GateKeeper application."""
+        parser = argparse.ArgumentParser(description='GateKeeper Network Security Scanner')
+        subparsers = parser.add_subparsers(dest='command', help='Available commands')
         
         # Scan command
-        scan_parser = subparsers.add_parser("scan", help="Perform a network scan")
-        scan_parser.add_argument("-t", "--target", help="Target IP address or hostname")
-        scan_parser.add_argument("-p", "--ports", help="Port numbers to scan (e.g. 80,443,8000-8010)")
-        scan_parser.add_argument("--policy", help="Scan policy name")
-        scan_parser.add_argument("-g", "--group", help="Target group name")
-        scan_parser.add_argument("--notify", action="store_true", help="Send notifications based on scan results")
-        scan_parser.add_argument("--output", help="Output filename (without extension)")
-        scan_parser.add_argument("--format", choices=["json", "csv", "html", "all"], default="json", 
-                               help="Output format (default: json)")
-        scan_parser.add_argument("--no-encrypt", action="store_true", help="Disable encryption of JSON results")
-        
-        # Compare command
-        compare_parser = subparsers.add_parser("compare", help="Compare two scan reports")
-        compare_parser.add_argument("report1", help="First report file")
-        compare_parser.add_argument("report2", help="Second report file")
-        
-        # Reports command
-        reports_parser = subparsers.add_parser("reports", help="Manage scan reports")
-        reports_subparsers = reports_parser.add_subparsers(dest="reports_command", help="Reports command")
-        reports_list_parser = reports_subparsers.add_parser("list", help="List available scan reports")
-        
-        # Export command
-        export_parser = subparsers.add_parser("export", help="Export scan results to different formats")
-        export_parser.add_argument("report", help="Report file to export")
-        export_parser.add_argument("--format", choices=["csv", "html", "all"], default="all", 
-                                 help="Export format (default: all)")
-        
-        # Analyze command
-        analyze_parser = subparsers.add_parser("analyze", help="Analyze port behavior from scan reports")
-        analyze_parser.add_argument("report", help="Report file to analyze")
+        scan_parser = subparsers.add_parser('scan', help='Run a network scan')
+        scan_parser.add_argument('target', help='Target IP address or hostname')
+        scan_parser.add_argument('ports', help='Port range or list (e.g., 80,443 or 1-1000)')
+        scan_parser.add_argument('--threads', type=int, default=100, help='Number of concurrent threads')
+        scan_parser.add_argument('--timeout', type=float, default=1.0, help='Connection timeout in seconds')
+        scan_parser.add_argument('--scan-type', choices=['tcp', 'udp'], default='tcp', help='Scan type')
+        scan_parser.add_argument('--policy', help='Scan policy name')
+        scan_parser.add_argument('--group', help='Target group name')
+        scan_parser.add_argument('--notify', action='store_true', help='Send notifications')
         
         # Policies command
-        policies_parser = subparsers.add_parser("policies", help="Manage scan policies")
-        policies_subparsers = policies_parser.add_subparsers(dest="policies_command", help="Policies command")
-        policies_list_parser = policies_subparsers.add_parser("list", help="List available scan policies")
+        policies_parser = subparsers.add_parser('policies', help='Manage scan policies')
+        policies_subparsers = policies_parser.add_subparsers(dest='policies_command')
+        policies_subparsers.add_parser('list', help='List available policies')
         
         # Groups command
-        groups_parser = subparsers.add_parser("groups", help="Manage target groups")
-        groups_subparsers = groups_parser.add_subparsers(dest="groups_command", help="Groups command")
-        groups_list_parser = groups_subparsers.add_parser("list", help="List available target groups")
+        groups_parser = subparsers.add_parser('groups', help='Manage target groups')
+        groups_subparsers = groups_parser.add_subparsers(dest='groups_command')
+        groups_subparsers.add_parser('list', help='List available groups')
+        
+        # Reports command
+        reports_parser = subparsers.add_parser('reports', help='Manage scan reports')
+        reports_subparsers = reports_parser.add_subparsers(dest='reports_command')
+        reports_subparsers.add_parser('list', help='List available reports')
+        
+        # Compare command
+        compare_parser = subparsers.add_parser('compare', help='Compare scan reports')
+        compare_parser.add_argument('report1', help='First report file')
+        compare_parser.add_argument('report2', help='Second report file')
+        
+        # Analyze command
+        analyze_parser = subparsers.add_parser('analyze', help='Analyze port behavior')
+        analyze_parser.add_argument('report', help='Report file to analyze')
         
         args = parser.parse_args()
         
-        # If no command specified, show help
         if not args.command:
             parser.print_help()
             return
         
-        # Handle commands
-        if args.command == "scan":
-            # Validate scan arguments
-            if not args.target and not args.group:
-                scan_parser.error("Either --target or --group is required for a scan")
+        try:
+            gatekeeper = GateKeeper()
             
-            if not args.ports and not args.group and not args.policy:
-                scan_parser.error("Either --ports, --group, or --policy is required for a scan")
-            
-            ports = []
-            if args.ports:
-                ports = self.parse_ports(args.ports)
-            
-            self.scan(
-                target=args.target, 
-                ports=ports, 
-                policy=args.policy, 
-                group=args.group, 
-                notify=args.notify
-            )
-            
-        elif args.command == "compare":
-            self.compare_reports(args.report1, args.report2)
-            
-        elif args.command == "reports":
-            if args.reports_command == "list":
-                self.list_available_reports()
-            else:
-                reports_parser.print_help()
+            if args.command == "scan":
+                # Parse ports
+                ports = gatekeeper.parse_ports(args.ports)
                 
-        elif args.command == "export":
-            export_results(args.report, args.format)
-            
-        elif args.command == "analyze":
-            self.analyze_port_behavior(args.report)
-            
-        elif args.command == "policies":
-            if args.policies_command == "list":
-                policy_manager = get_policy_manager()
-                policy_manager.list_policies()
-            else:
-                policies_parser.print_help()
+                # Run scan
+                gatekeeper.scan_target(
+                    target=args.target,
+                    ports=ports,
+                    threads=args.threads,
+                    timeout=args.timeout,
+                    scan_type=args.scan_type,
+                    policy_name=args.policy,
+                    group_name=args.group
+                )
                 
-        elif args.command == "groups":
-            if args.groups_command == "list":
-                target_groups = get_target_groups()
-                target_groups.list_groups()
-            else:
-                groups_parser.print_help()
+            elif args.command == "policies":
+                if args.policies_command == "list":
+                    gatekeeper.policy_manager.list_policies()
+                else:
+                    policies_parser.print_help()
+                    
+            elif args.command == "groups":
+                if args.groups_command == "list":
+                    gatekeeper.target_groups.list_groups()
+                else:
+                    groups_parser.print_help()
+                    
+            elif args.command == "reports":
+                if args.reports_command == "list":
+                    gatekeeper.list_available_reports()
+                else:
+                    reports_parser.print_help()
+                    
+            elif args.command == "compare":
+                gatekeeper.compare_reports(args.report1, args.report2)
+                
+            elif args.command == "analyze":
+                gatekeeper.analyze_port_behavior(args.report)
+                
+        except Exception as e:
+            print(f"Error: {str(e)}")
+            sys.exit(1)
 
 if __name__ == "__main__":
     gatekeeper = GateKeeper()
