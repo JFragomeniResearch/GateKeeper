@@ -265,25 +265,21 @@ class GateKeeper:
         """Scan a single port."""
         try:
             if scan_type == "tcp":
-                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                sock.settimeout(timeout)
-                result = sock.connect_ex((target, port))
-                sock.close()
-                return result == 0, None
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                    sock.settimeout(timeout)
+                    result = sock.connect_ex((target, port))
+                    return result == 0, None
             elif scan_type == "udp":
-                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                sock.settimeout(timeout)
-                try:
-                    sock.sendto(b'', (target, port))
-                    data, addr = sock.recvfrom(1024)
-                    sock.close()
-                    return True, None
-                except socket.timeout:
-                    sock.close()
-                    return False, None
-                except Exception as e:
-                    sock.close()
-                    return False, str(e)
+                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+                    sock.settimeout(timeout)
+                    try:
+                        sock.sendto(b'', (target, port))
+                        data, addr = sock.recvfrom(1024)
+                        return True, None
+                    except socket.timeout:
+                        return False, None
+                    except Exception as e:
+                        return False, str(e)
             else:
                 raise ValueError(f"Unsupported scan type: {scan_type}")
         except Exception as e:
@@ -367,28 +363,26 @@ class GateKeeper:
         # Use asyncio.sleep instead of time.sleep for rate limiting in async functions
         await asyncio.sleep(self.rate_limit)
         
-        # Create a socket for connection testing
-        sock = None
         try:
-            # Use low-level socket creation to control timing and options
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(self.timeout)
-            
-            # Attempt connection
-            result = sock.connect_ex((self.target, port))
-            
-            if result == 0:
-                # Connection successful - port is open
-                service_info = await self._identify_service(port)
-                self.logger.info(f"Port {port} is open ({service_info['name']})")
+            # Use context manager for socket handling
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.settimeout(self.timeout)
                 
-                return {
-                    'port': port,
-                    'status': 'open',
-                    'service': service_info['name'],
-                    'version': service_info['version'],
-                    'timestamp': datetime.now().isoformat()
-                }
+                # Attempt connection
+                result = sock.connect_ex((self.target, port))
+                
+                if result == 0:
+                    # Connection successful - port is open
+                    service_info = await self._identify_service(port)
+                    self.logger.info(f"Port {port} is open ({service_info['name']})")
+                    
+                    return {
+                        'port': port,
+                        'status': 'open',
+                        'service': service_info['name'],
+                        'version': service_info['version'],
+                        'timestamp': datetime.now().isoformat()
+                    }
             
             return None  # Port is closed or filtered
             
@@ -400,13 +394,6 @@ class GateKeeper:
             self.logger.error(f"Socket error scanning port {port}: {e}")
         except Exception as e:
             self.logger.error(f"Unexpected error scanning port {port}: {e}")
-        finally:
-            # Ensure socket is closed in all cases
-            if sock:
-                try:
-                    sock.close()
-                except Exception:
-                    pass
         
         return None  # Return None for all error cases
 
