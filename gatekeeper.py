@@ -262,7 +262,21 @@ class GateKeeper:
             return False
 
     def _scan_port(self, target: str, port: int, timeout: float, scan_type: str) -> Tuple[bool, Optional[str]]:
-        """Scan a single port."""
+        """
+        Scan a single port.
+        
+        Args:
+            target: Target IP address or hostname
+            port: Port number to scan
+            timeout: Connection timeout in seconds
+            scan_type: Type of scan ('tcp' or 'udp')
+            
+        Returns:
+            Tuple[bool, Optional[str]]: A tuple where:
+                - First element is True if port is open, False otherwise
+                - Second element is None if port is closed/open normally,
+                  or an error string if port is filtered or an error occurred
+        """
         try:
             if scan_type == "tcp":
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
@@ -314,11 +328,8 @@ class GateKeeper:
                         if is_open:
                             open_ports.append(port)
                         elif error:
-                            error_ports.append(port)
-                            self.logger.error(f"Error scanning port {port}: {error}")
-                            self.config_manager.update_state(
-                                error_count=state.error_count + 1
-                            )
+                            filtered_ports.append(port)
+                            self.logger.debug(f"Port {port} filtered: {error}")
                         else:
                             closed_ports.append(port)
                     except Exception as e:
@@ -1006,9 +1017,12 @@ class GateKeeper:
             for future in concurrent.futures.as_completed(future_to_port):
                 port = future_to_port[future]
                 try:
-                    result = future.result()
-                    if result[0]:  # port is open
+                    is_open, error = future.result()
+                    if is_open:
                         open_ports.append(port)
+                    elif error:
+                        filtered_ports.append(port)
+                        self.logger.debug(f"Port {port} filtered: {error}")
                     else:
                         closed_ports.append(port)
                 except Exception as e:
@@ -1019,7 +1033,7 @@ class GateKeeper:
                     )
                 
                 # Update progress
-                progress = (len(open_ports) + len(closed_ports) + len(error_ports)) / len(config.ports)
+                progress = (len(open_ports) + len(closed_ports) + len(filtered_ports) + len(error_ports)) / len(config.ports)
                 self.config_manager.update_state(progress=progress)
         
         return {
