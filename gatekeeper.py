@@ -639,38 +639,59 @@ class GateKeeper:
 
     def _save_html_results(self, results: Dict[str, Any], filepath: Path) -> None:
         """Save results in HTML format."""
+        html_template = """<!DOCTYPE html>
+<html>
+<head>
+    <title>GateKeeper Scan Results</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        table { border-collapse: collapse; width: 100%; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background-color: #f2f2f2; }
+        .open { color: green; }
+        .closed { color: red; }
+        .filtered { color: orange; }
+        .error { color: gray; }
+    </style>
+</head>
+<body>
+    <h1>GateKeeper Scan Results</h1>
+    <p>Target: {target}</p>
+    <p>Scan ID: {scan_id}</p>
+    <p>Start Time: {start_time}</p>
+    <p>End Time: {end_time}</p>
+    
+    <h2>Port Status</h2>
+    <table>
+        <tr><th>Port</th><th>Status</th></tr>
+        {port_rows}
+    </table>
+</body>
+</html>
+"""
+        # Generate table rows for each port
+        port_rows = []
+        for port in results['open_ports']:
+            port_rows.append(f'<tr><td>{port}</td><td class="open">Open</td></tr>')
+        for port in results['closed_ports']:
+            port_rows.append(f'<tr><td>{port}</td><td class="closed">Closed</td></tr>')
+        for port in results['filtered_ports']:
+            port_rows.append(f'<tr><td>{port}</td><td class="filtered">Filtered</td></tr>')
+        for port in results['error_ports']:
+            port_rows.append(f'<tr><td>{port}</td><td class="error">Error</td></tr>')
+        
+        # Format the template with data
+        html_content = html_template.format(
+            target=html.escape(results["target"]),
+            scan_id=html.escape(results["scan_id"]),
+            start_time=html.escape(results["start_time"]),
+            end_time=html.escape(results["end_time"]),
+            port_rows="\n        ".join(port_rows)
+        )
+        
+        # Write to file
         with self._open_file(filepath, 'w') as f:
-            f.write('<!DOCTYPE html>\n<html>\n<head>\n')
-            f.write('<title>GateKeeper Scan Results</title>\n')
-            f.write('<style>\n')
-            f.write('body { font-family: Arial, sans-serif; margin: 20px; }\n')
-            f.write('table { border-collapse: collapse; width: 100%; }\n')
-            f.write('th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }\n')
-            f.write('th { background-color: #f2f2f2; }\n')
-            f.write('</style>\n')
-            f.write('</head>\n<body>\n')
-            
-            f.write(f'<h1>GateKeeper Scan Results</h1>\n')
-            f.write(f'<p>Target: {html.escape(results["target"])}</p>\n')
-            f.write(f'<p>Scan ID: {html.escape(results["scan_id"])}</p>\n')
-            f.write(f'<p>Start Time: {html.escape(results["start_time"])}</p>\n')
-            f.write(f'<p>End Time: {html.escape(results["end_time"])}</p>\n')
-            
-            f.write('<h2>Port Status</h2>\n')
-            f.write('<table>\n')
-            f.write('<tr><th>Port</th><th>Status</th></tr>\n')
-            
-            for port in results['open_ports']:
-                f.write(f'<tr><td>{port}</td><td style="color: green;">Open</td></tr>\n')
-            for port in results['closed_ports']:
-                f.write(f'<tr><td>{port}</td><td style="color: red;">Closed</td></tr>\n')
-            for port in results['filtered_ports']:
-                f.write(f'<tr><td>{port}</td><td style="color: orange;">Filtered</td></tr>\n')
-            for port in results['error_ports']:
-                f.write(f'<tr><td>{port}</td><td style="color: gray;">Error</td></tr>\n')
-            
-            f.write('</table>\n')
-            f.write('</body>\n</html>\n')
+            f.write(html_content)
         
         self.logger.debug(f"Saved HTML results to {filepath}")
 
