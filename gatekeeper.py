@@ -824,8 +824,44 @@ class GateKeeper:
             )
             raise
 
+    def _parse_port_range(self, range_str: str) -> List[int]:
+        """
+        Parse a port range string (e.g., '1-100') into a list of port numbers.
+        
+        Args:
+            range_str: Port range string in the format 'start-end'
+            
+        Returns:
+            List of port numbers in the range
+        
+        Raises:
+            ValueError: If the range is invalid
+        """
+        ports = []
+        start, end = map(int, range_str.split('-'))
+        if start > end:
+            raise ValueError(f"Invalid port range: {start}-{end}")
+        for port in range(start, end + 1):
+            self._validate_port(port, f"range {start}-{end}")
+            ports.append(port)
+        return ports
+
     def parse_ports(self, ports: str) -> List[int]:
-        """Parse a string of ports into a list of integers."""
+        """
+        Parse a string of ports into a list of integers.
+        
+        Supports individual ports (e.g., '80') and port ranges (e.g., '1-100').
+        Multiple ports or ranges can be separated by commas.
+        
+        Args:
+            ports: String representation of ports (e.g., '22,80,443,1000-1100')
+            
+        Returns:
+            List of unique, sorted port numbers
+            
+        Raises:
+            ValueError: If any port is invalid or out of range
+        """
         config = self.config_manager.config
         state = self.config_manager.state
         
@@ -837,12 +873,7 @@ class GateKeeper:
                 part = part.strip()
                 if '-' in part:
                     # Handle port range
-                    start, end = map(int, part.split('-'))
-                    if start > end:
-                        raise ValueError(f"Invalid port range: {start}-{end}")
-                    for port in range(start, end + 1):
-                        self._validate_port(port, f"range {start}-{end}")
-                        result.append(port)
+                    result.extend(self._parse_port_range(part))
                 else:
                     # Handle single port
                     port = int(part)
