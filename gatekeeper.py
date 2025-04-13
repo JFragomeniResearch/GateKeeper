@@ -209,10 +209,31 @@ class GateKeeper:
         
         return logger
 
+    def _handle_dns_error(self, error_type: str, target: str, error: Optional[Exception] = None) -> bool:
+        """
+        Handle DNS resolution errors consistently.
+        
+        Args:
+            error_type: Type of DNS error (e.g., 'not exist', 'timeout')
+            target: The target hostname or IP being resolved
+            error: The exception that was raised (optional)
+            
+        Returns:
+            bool: Always returns False to indicate failure
+        """
+        error_msg = f"DNS resolution failed: {error_type} for {target}"
+        if error:
+            error_msg += f": {str(error)}"
+            
+        self.logger.error(error_msg)
+        self.config_manager.update_state(
+            error_count=self.config_manager.state.error_count + 1
+        )
+        return False
+        
     def verify_dns(self, target: str) -> bool:
         """Verify DNS resolution for a target."""
         config = self.config_manager.config
-        state = self.config_manager.state
         
         try:
             # Try to resolve the target
@@ -230,36 +251,16 @@ class GateKeeper:
                     resolver.resolve(target)
                     return True
                 except dns.resolver.NXDOMAIN:
-                    self.logger.error(f"DNS resolution failed: {target} does not exist")
-                    self.config_manager.update_state(
-                        error_count=state.error_count + 1
-                    )
-                    return False
+                    return self._handle_dns_error("does not exist", target)
                 except dns.resolver.Timeout:
-                    self.logger.error(f"DNS resolution timed out: {target}")
-                    self.config_manager.update_state(
-                        error_count=state.error_count + 1
-                    )
-                    return False
+                    return self._handle_dns_error("timed out", target)
                 except dns.resolver.NoAnswer:
-                    self.logger.error(f"DNS resolution failed: No answer for {target}")
-                    self.config_manager.update_state(
-                        error_count=state.error_count + 1
-                    )
-                    return False
+                    return self._handle_dns_error("no answer", target)
                 except Exception as e:
-                    self.logger.error(f"DNS resolution error for {target}: {str(e)}")
-                    self.config_manager.update_state(
-                        error_count=state.error_count + 1
-                    )
-                    return False
+                    return self._handle_dns_error("error", target, e)
                     
         except Exception as e:
-            self.logger.error(f"Error verifying DNS for {target}: {str(e)}")
-            self.config_manager.update_state(
-                error_count=state.error_count + 1
-            )
-            return False
+            return self._handle_dns_error("general verification error", target, e)
 
     def _scan_port(self, target: str, port: int, timeout: float, scan_type: str) -> Tuple[bool, Optional[str]]:
         """
