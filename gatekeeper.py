@@ -63,15 +63,6 @@ class GateKeeper:
         
         self.logger.info("GateKeeper initialized")
         
-        self.start_time = None
-        self.target = None
-        self.ports = []
-        self.threads = 100
-        self.timeout = 1
-        self.rate_limit = 0.1
-        self.max_scan_rate = 1000  # maximum ports per second
-        self.encryption_key = self.config_manager.config.encryption_key
-        self.reports_dir = Path('reports')
         # Define common ports as a class attribute to avoid duplication
         self.common_ports = {
             21: "FTP",
@@ -92,7 +83,7 @@ class GateKeeper:
             5432: "PostgreSQL",
             8080: "HTTP-Proxy"
         }
-        
+
     def _generate_encryption_key(self) -> bytes:
         """Generate a new encryption key."""
         config = self.config_manager.config
@@ -369,19 +360,21 @@ class GateKeeper:
         Returns:
             Optional[Dict]: Scan result if the port is open, None otherwise
         """
+        config = self.config_manager.config
+        
         if not 0 <= port <= 65535:
             raise ValueError(f"Port number must be between 0 and 65535, got {port}")
         
         # Use asyncio.sleep instead of time.sleep for rate limiting in async functions
-        await asyncio.sleep(self.rate_limit)
+        await asyncio.sleep(config.rate_limit)
         
         try:
             # Use context manager for socket handling
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-                sock.settimeout(self.timeout)
+                sock.settimeout(config.timeout)
                 
                 # Attempt connection
-                result = sock.connect_ex((self.target, port))
+                result = sock.connect_ex((config.target, port))
                 
                 if result == 0:
                     # Connection successful - port is open
@@ -419,9 +412,10 @@ class GateKeeper:
         Returns:
             Optional[bytes]: The probe data as bytes, or None if no probe is needed
         """
+        config = self.config_manager.config
         if port in [80, 443, 8080]:
             # HTTP probe
-            return f"GET / HTTP/1.1\r\nHost: {self.target}\r\n\r\n".encode()
+            return f"GET / HTTP/1.1\r\nHost: {config.target}\r\n\r\n".encode()
         elif port in [25, 587]:
             # SMTP probe
             return b"EHLO gatekeeper.scan\r\n"
@@ -448,12 +442,13 @@ class GateKeeper:
         Returns:
             Dict[str, str]: Dictionary containing service name and version
         """
+        config = self.config_manager.config
         # Default service info if we can't identify it
         service_info = {"name": self.common_ports.get(port, f"Unknown-{port}"), "version": ""}
         
         try:
             reader, writer = await asyncio.open_connection(
-                self.target, port, timeout=self.timeout
+                config.target, port, timeout=config.timeout
             )
             
             # Get appropriate probe based on port
@@ -466,7 +461,7 @@ class GateKeeper:
             
             # Read response with timeout
             try:
-                response = await asyncio.wait_for(reader.read(1024), timeout=self.timeout)
+                response = await asyncio.wait_for(reader.read(1024), timeout=config.timeout)
                 
                 # Decode response if possible
                 response_str = response.decode('utf-8', errors='ignore')
@@ -549,17 +544,23 @@ class GateKeeper:
 
     def encrypt_results(self, results: List[Dict]) -> bytes:
         """Encrypt scan results"""
-        f = Fernet(self.encryption_key)
+        config = self.config_manager.config
+        if not config.encryption_key:
+            raise ValueError("Encryption key not configured")
+        f = Fernet(config.encryption_key)
         data = json.dumps(results).encode()
         return f.encrypt(data)
 
     def decrypt_results(self, encrypted_data: bytes) -> List[Dict]:
         """Decrypt scan results."""
+        config = self.config_manager.config
         if not encrypted_data:
             raise ValueError("Cannot decrypt empty data")
             
         try:
-            f = Fernet(self.encryption_key)
+            if not config.encryption_key:
+                raise ValueError("Encryption key not configured")
+            f = Fernet(config.encryption_key)
             decrypted_data = f.decrypt(encrypted_data)
             return json.loads(decrypted_data.decode())
         except Exception as e:
