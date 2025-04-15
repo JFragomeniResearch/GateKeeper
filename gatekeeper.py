@@ -37,6 +37,7 @@ import threading
 import queue
 import contextlib
 from typing import Iterator
+import functools
 
 # Initialize colorama
 init(autoreset=True)  # Automatically reset colors after each print
@@ -106,67 +107,66 @@ class GateKeeper:
             )
             raise
 
+    def _handle_encryption_errors(self, func):
+        """Decorator to handle common errors in encryption/decryption methods."""
+        @functools.wraps(func)
+        def wrapper(self, filepath: Union[str, Path], *args, **kwargs):
+            config = self.config_manager.config
+            state = self.config_manager.state
+            
+            # Determine default return value based on function name
+            default_return = False if 'encrypt' in func.__name__ else None
+            
+            if not config.encryption_key:
+                self.logger.error("No encryption key configured")
+                self.config_manager.update_state(
+                    error_count=state.error_count + 1
+                )
+                return default_return
+            
+            try:
+                return func(self, filepath, *args, **kwargs)
+            except Exception as e:
+                action = "encrypting" if 'encrypt' in func.__name__ else "decrypting"
+                self.logger.error(f"Error {action} file {filepath}: {str(e)}")
+                self.config_manager.update_state(
+                    error_count=state.error_count + 1
+                )
+                return default_return
+            
+        return wrapper
+
+    @_handle_encryption_errors
     def _encrypt_file(self, filepath: Union[str, Path]) -> bool:
         """Encrypt a file using the configured encryption key."""
         config = self.config_manager.config
-        state = self.config_manager.state
         
-        if not config.encryption_key:
-            self.logger.error("No encryption key configured")
-            self.config_manager.update_state(
-                error_count=state.error_count + 1
-            )
-            return False
+        # Read the file content
+        content = self._read_file(filepath, binary=True)
+        if content is None:
+            return False # Handled by decorator, but explicit return helps clarity
         
-        try:
-            # Read the file content
-            content = self._read_file(filepath, binary=True)
-            if content is None:
-                return False
-            
-            # Encrypt the content
-            fernet = Fernet(config.encryption_key)
-            encrypted_content = fernet.encrypt(content)
-            
-            # Write the encrypted content
-            encrypted_file = Path(f"{filepath}.enc")
-            return self._write_file(encrypted_file, encrypted_content, binary=True)
-            
-        except Exception as e:
-            self.logger.error(f"Error encrypting file {filepath}: {str(e)}")
-            self.config_manager.update_state(
-                error_count=state.error_count + 1
-            )
-            return False
+        # Encrypt the content
+        fernet = Fernet(config.encryption_key)
+        encrypted_content = fernet.encrypt(content)
+        
+        # Write the encrypted content
+        encrypted_file = Path(f"{filepath}.enc")
+        return self._write_file(encrypted_file, encrypted_content, binary=True)
 
+    @_handle_encryption_errors
     def _decrypt_file(self, filepath: Union[str, Path]) -> Optional[bytes]:
         """Decrypt a file using the configured encryption key."""
         config = self.config_manager.config
-        state = self.config_manager.state
         
-        if not config.encryption_key:
-            self.logger.error("No encryption key configured")
-            self.config_manager.update_state(
-                error_count=state.error_count + 1
-            )
-            return None
+        # Read the encrypted content
+        encrypted_content = self._read_file(filepath, binary=True)
+        if encrypted_content is None:
+            return None # Handled by decorator, but explicit return helps clarity
         
-        try:
-            # Read the encrypted content
-            encrypted_content = self._read_file(filepath, binary=True)
-            if encrypted_content is None:
-                return None
-            
-            # Decrypt the content
-            fernet = Fernet(config.encryption_key)
-            return fernet.decrypt(encrypted_content)
-            
-        except Exception as e:
-            self.logger.error(f"Error decrypting file {filepath}: {str(e)}")
-            self.config_manager.update_state(
-                error_count=state.error_count + 1
-            )
-            return None
+        # Decrypt the content
+        fernet = Fernet(config.encryption_key)
+        return fernet.decrypt(encrypted_content)
 
     def _setup_logging(self) -> logging.Logger:
         """Set up logging configuration."""
