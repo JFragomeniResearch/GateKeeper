@@ -583,6 +583,13 @@ class GateKeeper:
         config = self.config_manager.config
         state = self.config_manager.state
         
+        # Map format names to save methods
+        save_methods = {
+            "json": self._save_json_results,
+            "csv": self._save_csv_results,
+            "html": self._save_html_results,
+        }
+        
         try:
             # Ensure output directory exists
             output_dir = Path(config.output_dir)
@@ -593,21 +600,19 @@ class GateKeeper:
             base_filename = f"gatekeeper_scan_{timestamp}"
             
             # Save in each configured format
-            for format in config.export_formats:
-                try:
-                    if format == "json":
-                        self._save_json_results(results, output_dir / f"{base_filename}.json")
-                    elif format == "csv":
-                        self._save_csv_results(results, output_dir / f"{base_filename}.csv")
-                    elif format == "html":
-                        self._save_html_results(results, output_dir / f"{base_filename}.html")
-                    else:
-                        self.logger.warning(f"Unsupported export format: {format}")
-                except Exception as e:
-                    self.logger.error(f"Error saving {format} results: {str(e)}")
-                    self.config_manager.update_state(
-                        error_count=state.error_count + 1
-                    )
+            for format_name in config.export_formats:
+                save_func = save_methods.get(format_name)
+                if save_func:
+                    try:
+                        filepath = output_dir / f"{base_filename}.{format_name}"
+                        save_func(results, filepath)
+                    except Exception as e:
+                        self.logger.error(f"Error saving {format_name} results: {str(e)}")
+                        self.config_manager.update_state(
+                            error_count=state.error_count + 1
+                        )
+                else:
+                    self.logger.warning(f"Unsupported export format: {format_name}")
             
             self.logger.info(f"Results saved to {output_dir}")
             
