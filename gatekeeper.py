@@ -84,7 +84,7 @@ class GateKeeper:
             5432: "PostgreSQL",
             8080: "HTTP-Proxy"
         }
-
+        
     def _generate_encryption_key(self) -> bytes:
         """Generate a new encryption key."""
         config = self.config_manager.config
@@ -227,30 +227,28 @@ class GateKeeper:
         config = self.config_manager.config
         
         try:
-            # Try to resolve the target
-            resolver = dns.resolver.Resolver()
-            resolver.timeout = config.timeout
-            resolver.lifetime = config.timeout
-            
-            # Check if it's an IP address
+            # Check if it's an IP address first
+            ipaddress.ip_address(target)
+            return True # It's a valid IP
+        except ValueError:
+            # Not an IP, so try DNS resolution
             try:
-                ipaddress.ip_address(target)
-                return True
-            except ValueError:
-                # Not an IP, try DNS resolution
-                try:
-                    resolver.resolve(target)
-                    return True
-                except dns.resolver.NXDOMAIN:
-                    return self._handle_dns_error("does not exist", target)
-                except dns.resolver.Timeout:
-                    return self._handle_dns_error("timed out", target)
-                except dns.resolver.NoAnswer:
-                    return self._handle_dns_error("no answer", target)
-                except Exception as e:
-                    return self._handle_dns_error("error", target, e)
-                    
+                resolver = dns.resolver.Resolver()
+                resolver.timeout = config.timeout
+                resolver.lifetime = config.timeout
+                resolver.resolve(target)
+                return True # DNS resolved successfully
+            except dns.resolver.NXDOMAIN:
+                return self._handle_dns_error("does not exist", target)
+            except dns.resolver.Timeout:
+                return self._handle_dns_error("timed out", target)
+            except dns.resolver.NoAnswer:
+                return self._handle_dns_error("no answer", target)
+            except Exception as e:
+                # Catch other DNS specific errors
+                return self._handle_dns_error("DNS resolution error", target, e)
         except Exception as e:
+            # Catch broader errors during the IP check or resolver setup
             return self._handle_dns_error("general verification error", target, e)
 
     def _scan_port(self, target: str, port: int, timeout: float, scan_type: str) -> Tuple[bool, Optional[str]]:
@@ -300,8 +298,9 @@ class GateKeeper:
         closed_ports = []
         filtered_ports = []
         error_ports = []
+        total_ports = len(ports)
         
-        with tqdm(total=len(ports), desc="Scanning ports", unit="port") as progress:
+        with tqdm(total=total_ports, desc="Scanning ports", unit="port") as progress:
             with concurrent.futures.ThreadPoolExecutor(max_workers=config.threads) as executor:
                 future_to_port = {
                     executor.submit(
@@ -325,21 +324,24 @@ class GateKeeper:
                         else:
                             closed_ports.append(port)
                     except Exception as e:
+                        # Handle errors during the scan of a single port
                         error_ports.append(port)
                         self.logger.error(f"Error scanning port {port}: {str(e)}")
                         self.config_manager.update_state(
                             error_count=state.error_count + 1
                         )
-                    
-                    progress.update(1)
-                    self.config_manager.update_state(
-                        progress=progress.n / len(ports)
-                    )
+                    finally:
+                         # Ensure progress is updated even if an error occurs
+                        progress.update(1)
+                        if total_ports > 0: # Avoid division by zero
+                            current_progress = progress.n / total_ports
+                            self.config_manager.update_state(progress=current_progress)
         
         return {
             "target": target,
             "scan_id": state.scan_id,
-            "start_time": state.start_time.isoformat(),
+            # Ensure start_time exists before accessing isoformat
+            "start_time": state.start_time.isoformat() if state.start_time else None,
             "end_time": datetime.now().isoformat(),
             "open_ports": open_ports,
             "closed_ports": closed_ports,
@@ -372,22 +374,22 @@ class GateKeeper:
             # Use context manager for socket handling
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
                 sock.settimeout(config.timeout)
-                
-                # Attempt connection
+            
+            # Attempt connection
                 result = sock.connect_ex((config.target, port))
+            
+            if result == 0:
+                # Connection successful - port is open
+                service_info = await self._identify_service(port)
+                self.logger.info(f"Port {port} is open ({service_info['name']})")
                 
-                if result == 0:
-                    # Connection successful - port is open
-                    service_info = await self._identify_service(port)
-                    self.logger.info(f"Port {port} is open ({service_info['name']})")
-                    
-                    return {
-                        'port': port,
-                        'status': 'open',
-                        'service': service_info['name'],
-                        'version': service_info['version'],
-                        'timestamp': datetime.now().isoformat()
-                    }
+                return {
+                    'port': port,
+                    'status': 'open',
+                    'service': service_info['name'],
+                    'version': service_info['version'],
+                    'timestamp': datetime.now().isoformat()
+                }
             
             return None  # Port is closed or filtered
             
@@ -489,7 +491,7 @@ class GateKeeper:
             except asyncio.TimeoutError:
                 # Timeout reading response, but connection was established
                 pass
-                
+            
             # Close the connection
             writer.close()
             await writer.wait_closed()
@@ -775,7 +777,7 @@ class GateKeeper:
             self.logger.info("Available reports:")
             for report in sorted(report_files):
                 self.logger.info(f"- {report.name}")
-            
+        
         except Exception as e:
             self.logger.error(f"Error listing reports: {str(e)}")
             self.config_manager.update_state(
@@ -893,35 +895,44 @@ class GateKeeper:
         config = self.config_manager.config
         state = self.config_manager.state
         
+        parsed_ports = []
         try:
-            result = []
-            
             # Split by commas and process each part
             for part in ports.split(','):
                 part = part.strip()
+                if not part: # Skip empty parts resulting from trailing commas etc.
+                    continue 
                 if '-' in part:
                     # Handle port range
-                    result.extend(self._parse_port_range(part))
+                    parsed_ports.extend(self._parse_port_range(part))
                 else:
                     # Handle single port
                     port = int(part)
                     self._validate_port(port)
-                    result.append(port)
+                    parsed_ports.append(port)
             
             # Remove duplicates and sort
-            result = sorted(set(result))
+            result = sorted(set(parsed_ports))
             
-            # Update configuration
-            self.config_manager.update_config(ports=result)
+            # Update configuration (Consider if this update is desired here)
+            # self.config_manager.update_config(ports=result)
             
             return result
             
-        except Exception as e:
-            self.logger.error(f"Error parsing ports: {str(e)}")
+        except ValueError as ve:
+            # Catch specific errors from int() or _validate_port/_parse_port_range
+            self.logger.error(f"Error parsing ports ('{ports}'): {str(ve)}")
             self.config_manager.update_state(
                 error_count=state.error_count + 1
             )
-            raise
+            raise # Re-raise after logging
+        except Exception as e:
+            # Catch unexpected errors during parsing
+            self.logger.error(f"Unexpected error parsing ports ('{ports}'): {str(e)}")
+            self.config_manager.update_state(
+                error_count=state.error_count + 1
+            )
+            raise # Re-raise after logging
 
     def _load_scan_policy(self, policy_name: str) -> None:
         """Load a scan policy."""
@@ -988,7 +999,7 @@ class GateKeeper:
                    group_name: Optional[str] = None) -> Dict[str, Any]:
         """Scan a target for open ports."""
         try:
-            # Update configuration
+            # Update configuration first
             self.config_manager.update_config(
                 target=target,
                 ports=ports,
@@ -997,36 +1008,38 @@ class GateKeeper:
                 scan_type=scan_type
             )
             
-            # Validate configuration
-            if not self.config_manager.validate_target(target):
-                raise ValueError(f"Invalid target: {target}")
-            if not self.config_manager.validate_ports(ports):
-                raise ValueError("Invalid port range")
+            # Validate configuration from ConfigManager
+            if not self.config_manager.validate_target(self.config_manager.config.target):
+                 # Use the value from config for validation
+                raise ValueError(f"Invalid target: {self.config_manager.config.target}")
+            if not self.config_manager.validate_ports(self.config_manager.config.ports):
+                raise ValueError("Invalid port configuration")
             
-            # Load policy if specified
+            # Load policy if specified (modifies config)
             if policy_name:
                 self._load_scan_policy(policy_name)
             
-            # Load target group if specified
+            # Load target group if specified (modifies config)
             if group_name:
                 group_config = self.target_groups.load_group(group_name)
-                if group_config:
+                if group_config: # Check if group was loaded successfully
                     self.config_manager.update_config(**group_config)
             
-            # Initialize scan state
+            # Initialize scan state (uses current config)
             self.config_manager.update_state(
                 start_time=datetime.now(),
                 scan_id=f"scan_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
                 status="running"
             )
             
-            display_scan_start(target, ports)
-            self.logger.info(f"Starting scan of {target} on ports {ports}")
+            # Display start banner (use config values)
+            display_scan_start(self.config_manager.config.target, self.config_manager.config.ports)
+            self.logger.info(f"Starting scan of {self.config_manager.config.target} on ports {self.config_manager.config.ports}")
             
-            # Perform the scan
+            # Perform the scan (uses config values)
             results = self._perform_scan()
             
-            # Update scan state
+            # Update scan state with results
             self.config_manager.update_state(
                 end_time=datetime.now(),
                 results=results,
@@ -1045,12 +1058,15 @@ class GateKeeper:
             return results
             
         except Exception as e:
+            # Centralized error handling for the entire scan process
             self.config_manager.update_state(
                 status="failed",
-                error_count=self.config_manager.state.error_count + 1
+                # Increment error count safely
+                error_count=getattr(self.config_manager.state, 'error_count', 0) + 1 
             )
-            self.logger.error(f"Scan failed: {str(e)}")
-            raise
+            # Log the exception causing the scan failure
+            self.logger.exception(f"Scan failed for target '{target}': {str(e)}") 
+            raise # Re-raise the exception so the caller knows the scan failed
 
     def _perform_scan(self) -> Dict[str, Any]:
         """Perform the actual port scan."""
@@ -1126,12 +1142,12 @@ class GateKeeper:
             for result in notification_results:
                 if result.get('success'):
                     self.logger.info(f"Notification sent: {result.get('message')}")
-                else:
+            else:
                     self.logger.error(f"Notification failed: {result.get('error')}")
                     self.config_manager.update_state(
                         error_count=state.error_count + 1
                     )
-            
+        
         except Exception as e:
             self.logger.error(f"Error processing notifications: {str(e)}")
             self.config_manager.update_state(
@@ -1226,11 +1242,52 @@ class GateKeeper:
             )
             raise
 
+    def _handle_scan_command(self, args: argparse.Namespace) -> None:
+        """Handle the 'scan' command."""
+        ports = self.parse_ports(args.ports)
+        self.scan_target(
+            target=args.target,
+            ports=ports,
+            threads=args.threads,
+            timeout=args.timeout,
+            scan_type=args.scan_type,
+            policy_name=args.policy,
+            group_name=args.group
+            # TODO: Add notification handling based on args.notify?
+        )
+
+    def _handle_policies_command(self, args: argparse.Namespace) -> None:
+        """Handle the 'policies' command and its subcommands."""
+        if args.policies_command == "list":
+            self.policy_manager.list_policies()
+        # No else needed: argparse handles invalid/missing subcommands due to required=True
+
+    def _handle_groups_command(self, args: argparse.Namespace) -> None:
+        """Handle the 'groups' command and its subcommands."""
+        if args.groups_command == "list":
+            self.target_groups.list_groups()
+        # No else needed: argparse handles invalid/missing subcommands due to required=True
+
+    def _handle_reports_command(self, args: argparse.Namespace) -> None:
+        """Handle the 'reports' command and its subcommands."""
+        if args.reports_command == "list":
+            self.list_available_reports()
+        # No else needed: argparse handles invalid/missing subcommands due to required=True
+
+    def _handle_compare_command(self, args: argparse.Namespace) -> None:
+        """Handle the 'compare' command."""
+        self.compare_reports(args.report1, args.report2)
+
+    def _handle_analyze_command(self, args: argparse.Namespace) -> None:
+        """Handle the 'analyze' command."""
+        self.analyze_port_behavior(args.report)
+
     def main(self) -> None:
         """Main entry point for the GateKeeper application."""
         parser = argparse.ArgumentParser(description='GateKeeper Network Security Scanner')
-        subparsers = parser.add_subparsers(dest='command', help='Available commands')
-        
+        # Make command required by argparse itself
+        subparsers = parser.add_subparsers(dest='command', help='Available commands', required=True)
+
         # Scan command
         scan_parser = subparsers.add_parser('scan', help='Run a network scan')
         scan_parser.add_argument('target', help='Target IP address or hostname')
@@ -1243,81 +1300,68 @@ class GateKeeper:
         scan_parser.add_argument('--notify', action='store_true', help='Send notifications')
         
         # Policies command
+        # Make subcommand required by argparse itself
         policies_parser = subparsers.add_parser('policies', help='Manage scan policies')
-        policies_subparsers = policies_parser.add_subparsers(dest='policies_command')
+        policies_subparsers = policies_parser.add_subparsers(dest='policies_command', help='Policy subcommands', required=True)
         policies_subparsers.add_parser('list', help='List available policies')
-        
+
         # Groups command
+        # Make subcommand required by argparse itself
         groups_parser = subparsers.add_parser('groups', help='Manage target groups')
-        groups_subparsers = groups_parser.add_subparsers(dest='groups_command')
+        groups_subparsers = groups_parser.add_subparsers(dest='groups_command', help='Group subcommands', required=True)
         groups_subparsers.add_parser('list', help='List available groups')
-        
+
         # Reports command
+        # Make subcommand required by argparse itself
         reports_parser = subparsers.add_parser('reports', help='Manage scan reports')
-        reports_subparsers = reports_parser.add_subparsers(dest='reports_command')
+        reports_subparsers = reports_parser.add_subparsers(dest='reports_command', help='Report subcommands', required=True)
         reports_subparsers.add_parser('list', help='List available reports')
-        
+
         # Compare command
         compare_parser = subparsers.add_parser('compare', help='Compare scan reports')
         compare_parser.add_argument('report1', help='First report file')
         compare_parser.add_argument('report2', help='Second report file')
-        
+
         # Analyze command
         analyze_parser = subparsers.add_parser('analyze', help='Analyze port behavior')
         analyze_parser.add_argument('report', help='Report file to analyze')
-        
+        # --- End of argument definitions ---
+
         args = parser.parse_args()
-        
-        if not args.command:
-            parser.print_help()
-            return
-        
+
+        # Map command names to handler methods
+        command_handlers = {
+            "scan": self._handle_scan_command,
+            "policies": self._handle_policies_command,
+            "groups": self._handle_groups_command,
+            "reports": self._handle_reports_command,
+            "compare": self._handle_compare_command,
+            "analyze": self._handle_analyze_command,
+        }
+
         try:
-            gatekeeper = GateKeeper()
-            
-            if args.command == "scan":
-                # Parse ports
-                ports = gatekeeper.parse_ports(args.ports)
-                
-                # Run scan
-                gatekeeper.scan_target(
-                    target=args.target,
-                    ports=ports,
-                    threads=args.threads,
-                    timeout=args.timeout,
-                    scan_type=args.scan_type,
-                    policy_name=args.policy,
-                    group_name=args.group
-                )
-                
-            elif args.command == "policies":
-                if args.policies_command == "list":
-                    gatekeeper.policy_manager.list_policies()
-                else:
-                    policies_parser.print_help()
-                    
-            elif args.command == "groups":
-                if args.groups_command == "list":
-                    gatekeeper.target_groups.list_groups()
-                else:
-                    groups_parser.print_help()
-                    
-            elif args.command == "reports":
-                if args.reports_command == "list":
-                    gatekeeper.list_available_reports()
-                else:
-                    reports_parser.print_help()
-                    
-            elif args.command == "compare":
-                gatekeeper.compare_reports(args.report1, args.report2)
-                
-            elif args.command == "analyze":
-                gatekeeper.analyze_port_behavior(args.report)
-                
+            # Get the handler function from the dictionary
+            # Argparse with required=True ensures command is valid and in the dict
+            handler = command_handlers[args.command] # Use direct access as key is guaranteed
+
+            # Execute the command handler
+            handler(args)
+
         except Exception as e:
-            print(f"Error: {str(e)}")
+            # Use logger if possible, otherwise print
+            log_message = f"Error executing command '{args.command}': {str(e)}"
+            try:
+                # Check if logger was initialized (might fail early in __init__)
+                if hasattr(self, 'logger') and self.logger:
+                    # Log exception with traceback for debugging
+                    self.logger.exception(log_message)
+                else:
+                    print(log_message, file=sys.stderr)
+            except Exception:
+                 # Fallback print if logging fails
+                 print(log_message, file=sys.stderr)
             sys.exit(1)
 
 if __name__ == "__main__":
-    gatekeeper = GateKeeper()
-    gatekeeper.main()
+    gatekeeper_instance = GateKeeper()
+    gatekeeper_instance.main()
