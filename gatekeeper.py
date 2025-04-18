@@ -43,6 +43,9 @@ import functools
 init(autoreset=True)  # Automatically reset colors after each print
 
 class GateKeeper:
+    LOG_DIR = Path('logs')
+    LOG_FILENAME = 'gatekeeper.log'
+
     def __init__(self):
         """Initialize the GateKeeper application."""
         # Set up logging
@@ -173,13 +176,13 @@ class GateKeeper:
         logger = logging.getLogger('gatekeeper')
         logger.setLevel(logging.DEBUG)
         
-        # Create logs directory if it doesn't exist
-        log_dir = Path('logs')
-        log_dir.mkdir(exist_ok=True)
+        # Create logs directory if it doesn't exist using class attribute
+        self.LOG_DIR.mkdir(exist_ok=True)
         
-        # File handler for debug logs
+        # File handler for debug logs using class attributes
+        log_filepath = self.LOG_DIR / self.LOG_FILENAME
         file_handler = logging.handlers.RotatingFileHandler(
-            log_dir / 'gatekeeper.log',
+            log_filepath,
             maxBytes=10*1024*1024,  # 10MB
             backupCount=5
         )
