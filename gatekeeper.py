@@ -837,7 +837,8 @@ class GateKeeper:
             if not isinstance(port, int):
                 raise ValueError(f"Port must be an integer, got {type(port)}")
             
-            if port < 1 or port > 65535:
+            # Use chained comparison for range check
+            if not 1 <= port <= 65535:
                 raise ValueError(f"Port must be between 1 and 65535, got {port}")
             
             # Check if port is in restricted range
