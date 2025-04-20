@@ -1197,6 +1197,7 @@ class GateKeeper:
             with self._open_file(filepath, mode) as f:
                 return f.read()
         except Exception as e:
+            # Catches errors during file opening (from _open_file) or during read()
             self.logger.error(f"Error reading file {filepath}: {str(e)}")
             self.config_manager.update_state(
                 error_count=self.config_manager.state.error_count + 1
@@ -1211,6 +1212,7 @@ class GateKeeper:
                 f.write(content)
             return True
         except Exception as e:
+            # Catches errors during file opening (from _open_file) or during write()
             self.logger.error(f"Error writing file {filepath}: {str(e)}")
             self.config_manager.update_state(
                 error_count=self.config_manager.state.error_count + 1
