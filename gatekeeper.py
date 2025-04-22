@@ -930,65 +930,73 @@ class GateKeeper:
             )
             raise # Re-raise after logging
 
-    def _load_scan_policy(self, policy_name: str) -> None:
-        """Load a scan policy."""
+    def _load_and_apply_sub_config(self, item_name: Optional[str], load_func: callable, item_type_name: str, 
+                                       failure_return_value: Any = None) -> Optional[Dict]:
+        """Helper to load, validate, and apply sub-configurations (policies/groups)."""
         config = self.config_manager.config
         state = self.config_manager.state
-        
-        try:
-            if not policy_name:
-                return
-            
-            # Load the policy
-            policy_config = self.policy_manager.load_policy(policy_name)
-            if not policy_config:
-                self.logger.error(f"Policy not found: {policy_name}")
-                self.config_manager.update_state(
-                    error_count=state.error_count + 1
-                )
-                return
-            
-            # Update configuration with policy settings
-            self.config_manager.update_config(**policy_config)
-            self.logger.info(f"Loaded policy: {policy_name}")
-            
-        except Exception as e:
-            self.logger.error(f"Error loading policy {policy_name}: {str(e)}")
-            self.config_manager.update_state(
-                error_count=state.error_count + 1
-            )
-            raise
 
-    def _load_target_group(self, group_name: str) -> Tuple[str, List[int]]:
-        """Load a target group."""
-        config = self.config_manager.config
-        state = self.config_manager.state
-        
+        if not item_name:
+            return None # Return None if no name provided, indicating nothing was loaded
+
         try:
-            if not group_name:
-                return None, []
+            loaded_config = load_func(item_name)
+
+            if not loaded_config:
+                self.logger.error(f"{item_type_name} not found: {item_name}")
+                self.config_manager.update_state(error_count=state.error_count + 1)
+                # Return the specific failure value expected by the caller
+                # This part is tricky as _load_target_group expects a specific tuple on failure
+                # We might need to adjust the caller or this helper's return handling
+                # For now, let's assume caller handles None return appropriately or we raise
+                # Let's raise an error here for simplicity, caller can catch if needed.
+                raise ValueError(f"{item_type_name} '{item_name}' not found or is empty.")
             
-            # Load the group
-            group_config = self.target_groups.load_group(group_name)
-            if not group_config:
-                self.logger.error(f"Group not found: {group_name}")
-                self.config_manager.update_state(
-                    error_count=state.error_count + 1
-                )
-                return None, []
-            
-            # Update configuration with group settings
-            self.config_manager.update_config(**group_config)
-            self.logger.info(f"Loaded group: {group_name}")
-            
-            return group_config.get('target'), group_config.get('ports', [])
-            
+            # Update main configuration with loaded settings
+            self.config_manager.update_config(**loaded_config)
+            self.logger.info(f"Loaded {item_type_name.lower()}: {item_name}")
+            return loaded_config # Return the loaded config dict
+
+        except ValueError as ve: # Catch the ValueError raised above
+            # Already logged, just re-raise or return failure value
+             # Re-raising is cleaner to signal failure upwards
+            raise ve 
         except Exception as e:
-            self.logger.error(f"Error loading group {group_name}: {str(e)}")
-            self.config_manager.update_state(
-                error_count=state.error_count + 1
+            self.logger.error(f"Error loading {item_type_name.lower()} {item_name}: {str(e)}")
+            self.config_manager.update_state(error_count=state.error_count + 1)
+            raise # Re-raise other exceptions
+
+    def _load_scan_policy(self, policy_name: str) -> None:
+        """Load a scan policy using the helper method."""
+        try:
+            self._load_and_apply_sub_config(
+                item_name=policy_name, 
+                load_func=self.policy_manager.load_policy, 
+                item_type_name="Policy"
             )
-            raise
+        except ValueError:
+            # Policy not found or empty, error already logged by helper.
+            # Method signature expects None return on failure, so we just return.
+            return 
+        # Let other exceptions propagate up
+
+    def _load_target_group(self, group_name: str) -> Tuple[Optional[str], List[int]]:
+        """Load a target group using the helper method."""
+        try:
+            loaded_config = self._load_and_apply_sub_config(
+                item_name=group_name, 
+                load_func=self.target_groups.load_group, 
+                item_type_name="Group"
+            )
+            if loaded_config: # Check if helper returned a valid config
+                 return loaded_config.get('target'), loaded_config.get('ports', [])
+            else:
+                # Should not happen if helper raises on failure, but acts as fallback
+                 return None, []
+        except ValueError:
+            # Group not found or empty, error already logged by helper.
+             return None, [] # Return the expected failure tuple
+        # Let other exceptions propagate up
 
     def scan_target(self, target: str, ports: List[int], threads: int = 100, timeout: float = 1.0,
                    scan_type: str = "tcp", policy_name: Optional[str] = None,
