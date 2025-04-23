@@ -1081,8 +1081,23 @@ class GateKeeper:
         closed_ports = []
         filtered_ports = []
         error_ports = []
+        total_ports = len(config.ports)
+        completed_count = 0
         
         with concurrent.futures.ThreadPoolExecutor(max_workers=config.threads) as executor:
+            if not config.ports: # Handle case with no ports to scan
+                self.logger.warning("No ports specified for scan.")
+                # Return early with empty results, potentially update state?
+                # For now, just return empty results consistent with no work done.
+                return {
+                    "target": config.target,
+                    "scan_id": state.scan_id,
+                    "start_time": state.start_time.isoformat() if state.start_time else None,
+                    "end_time": datetime.now().isoformat(),
+                    "open_ports": [], "closed_ports": [], "filtered_ports": [], "error_ports": [],
+                    "scan_type": config.scan_type, "threads": config.threads, "timeout": config.timeout
+                }
+
             future_to_port = {
                 executor.submit(
                     self._scan_port,
@@ -1110,15 +1125,18 @@ class GateKeeper:
                     self.config_manager.update_state(
                         error_count=state.error_count + 1
                     )
-                
-                # Update progress
-                progress = (len(open_ports) + len(closed_ports) + len(filtered_ports) + len(error_ports)) / len(config.ports)
-                self.config_manager.update_state(progress=progress)
+                finally:
+                    # Increment completed count regardless of outcome
+                    completed_count += 1
+                    # Update progress using the count
+                    if total_ports > 0:
+                        progress = completed_count / total_ports
+                        self.config_manager.update_state(progress=progress)
         
         return {
             "target": config.target,
             "scan_id": state.scan_id,
-            "start_time": state.start_time.isoformat(),
+            "start_time": state.start_time.isoformat() if state.start_time else None, # Handle potential None
             "end_time": datetime.now().isoformat(),
             "open_ports": open_ports,
             "closed_ports": closed_ports,
