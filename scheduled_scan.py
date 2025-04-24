@@ -179,10 +179,11 @@ class ScheduledScanManager:
             print(f"{Fore.YELLOW}No scheduled scans configured.{Style.RESET_ALL}")
             return
         
-        print(f"\n{Fore.GREEN}Configured Scheduled Scans:{Style.RESET_ALL}")
-        print(f"{'-' * 80}")
-        print(f"{'Name':<20} {'Schedule':<15} {'Target/Group':<20} {'Policy':<15} {'Last Run':<20}")
-        print(f"{'-' * 80}")
+        output_lines = []
+        output_lines.append(f"\n{Fore.GREEN}Configured Scheduled Scans:{Style.RESET_ALL}")
+        output_lines.append(f"{'-' * 80}")
+        output_lines.append(f"{'Name':<20} {'Schedule':<15} {'Target/Group':<20} {'Policy':<15} {'Last Run':<20}")
+        output_lines.append(f"{'-' * 80}")
         
         for name, config in schedules.items():
             # Format schedule time
@@ -198,10 +199,13 @@ class ScheduledScanManager:
             # Get last run time
             last_run = config.get('last_run', 'Never')
             
-            # Print details
-            print(f"{name:<20} {schedule_str:<15} {target:<20} {config.get('policy', 'Default'):<15} {last_run:<20}")
+            # Add formatted line to list
+            output_lines.append(f"{name:<20} {schedule_str:<15} {target:<20} {config.get('policy', 'Default'):<15} {last_run:<20}")
         
-        print(f"{'-' * 80}")
+        output_lines.append(f"{'-' * 80}")
+        
+        # Print the entire table at once
+        print("\n".join(output_lines))
     
     def run_scan(self, schedule_name: str):
         """
