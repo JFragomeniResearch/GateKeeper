@@ -1210,31 +1210,43 @@ class GateKeeper:
 
     def _read_file(self, filepath: Union[str, Path], binary: bool = False) -> Union[str, bytes, None]:
         """Read a file's contents."""
+        # Error handling for file opening is handled by _open_file context manager
         try:
             mode = 'rb' if binary else 'r'
             with self._open_file(filepath, mode) as f:
-                return f.read()
-        except Exception as e:
-            # Catches errors during file opening (from _open_file) or during read()
-            self.logger.error(f"Error reading file {filepath}: {str(e)}")
-            self.config_manager.update_state(
-                error_count=self.config_manager.state.error_count + 1
-            )
+                # Handle potential errors during the read operation itself, though less common
+                try:
+                    return f.read()
+                except Exception as e:
+                    self.logger.error(f"Error during read operation for {filepath}: {str(e)}")
+                    self.config_manager.update_state(
+                        error_count=self.config_manager.state.error_count + 1
+                    )
+                    return None
+        except Exception:
+            # Errors during _open_file (e.g., FileNotFoundError) are already logged
+            # and handled there. We just return None as per the original logic's failure case.
             return None
 
     def _write_file(self, filepath: Union[str, Path], content: Union[str, bytes], binary: bool = False) -> bool:
         """Write content to a file."""
+        # Error handling for file opening is handled by _open_file context manager
         try:
             mode = 'wb' if binary else 'w'
             with self._open_file(filepath, mode) as f:
-                f.write(content)
-            return True
-        except Exception as e:
-            # Catches errors during file opening (from _open_file) or during write()
-            self.logger.error(f"Error writing file {filepath}: {str(e)}")
-            self.config_manager.update_state(
-                error_count=self.config_manager.state.error_count + 1
-            )
+                # Handle potential errors during the write operation itself
+                try:
+                    f.write(content)
+                    return True
+                except Exception as e:
+                    self.logger.error(f"Error during write operation for {filepath}: {str(e)}")
+                    self.config_manager.update_state(
+                        error_count=self.config_manager.state.error_count + 1
+                    )
+                    return False
+        except Exception:
+            # Errors during _open_file are already logged and handled there.
+            # Return False as per the original logic's failure case.
             return False
 
     def _configure_notifications(self, config: Dict[str, Any]) -> None:
