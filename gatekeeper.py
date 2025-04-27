@@ -441,48 +441,35 @@ class GateKeeper:
         """Identify the service running on a specific port."""
         config = self.config_manager.config
         service_info = {"name": self.common_ports.get(port, f"Unknown-{port}"), "version": ""}
-        
+
         reader = None # Initialize reader/writer to ensure they exist in finally block
         writer = None
         try:
             reader, writer = await asyncio.open_connection(
                 config.target, port, timeout=config.timeout
             )
-            
+
             probe_data = self._get_service_probe(port)
             if probe_data:
                 writer.write(probe_data)
                 await writer.drain()
-            
+
             response = await asyncio.wait_for(reader.read(1024), timeout=config.timeout)
             response_str = response.decode('utf-8', errors='ignore')
-            
-            # --- Define conditions for clarity ---
-            is_http = b"HTTP/" in response
-            is_ssh = b"SSH-" in response
-            # Check for typical FTP responses (220 code often precedes server name)
-            is_ftp = b"FTP" in response or (b"220" in response and (b"ftp" in response.lower() or port == 21))
-            # Check for typical SMTP responses (220 code often precedes server name)
-            is_smtp = b"SMTP" in response or (b"220" in response and b"mail" in response.lower())
-            # Check for MySQL (often includes version number or keyword)
-            is_mysql = b"mysql" in response.lower() or port == 3306
-            # --- End conditions --- 
 
-            # Map conditions to handler functions
-            service_detectors = {
-                is_http: lambda: self._extract_http_info(response_str),
-                is_ssh: lambda: self._extract_ssh_info(response_str),
-                is_ftp: lambda: self._extract_ftp_info(response_str),
-                is_smtp: lambda: self._extract_smtp_info(response_str),
-                is_mysql: lambda: self._extract_mysql_info(response_str)
-            }
-            
-            # Apply the first matching detector
-            for condition, handler in service_detectors.items():
-                if condition: # Check if the condition variable is True
-                    service_info = handler()
-                    break
-                    
+            # --- Identify service based on response ---
+            if b"HTTP/" in response:
+                service_info = self._extract_http_info(response_str)
+            elif b"SSH-" in response:
+                service_info = self._extract_ssh_info(response_str)
+            elif b"FTP" in response or (b"220" in response and (b"ftp" in response.lower() or port == 21)):
+                service_info = self._extract_ftp_info(response_str)
+            elif b"SMTP" in response or (b"220" in response and b"mail" in response.lower()):
+                service_info = self._extract_smtp_info(response_str)
+            elif b"mysql" in response.lower() or port == 3306:
+                service_info = self._extract_mysql_info(response_str)
+            # --- End service identification ---
+
         except asyncio.TimeoutError:
             # Timeout reading response or connecting
             self.logger.debug(f"Timeout during service identification for port {port}")
@@ -498,7 +485,7 @@ class GateKeeper:
             if writer:
                 writer.close()
                 await writer.wait_closed()
-                
+
         return service_info
 
     def _extract_service_info(self, service_name: str, response_str: str, pattern: str) -> Dict[str, str]:
