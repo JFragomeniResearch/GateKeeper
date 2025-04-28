@@ -215,13 +215,14 @@ class GateKeeper:
         Returns:
             bool: Always returns False to indicate failure
         """
+        state = self.config_manager.state  # Get state object
         error_msg = f"DNS resolution failed: {error_type} for {target}"
         if error:
             error_msg += f": {str(error)}"
             
         self.logger.error(error_msg)
         self.config_manager.update_state(
-            error_count=self.config_manager.state.error_count + 1
+            error_count=state.error_count + 1  # Use the local state variable
         )
         return False
         
