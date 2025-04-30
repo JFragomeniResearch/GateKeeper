@@ -230,30 +230,38 @@ class GateKeeper:
         """Verify DNS resolution for a target."""
         config = self.config_manager.config
         
+        # First, check if it's a valid IP address.
         try:
-            # Check if it's an IP address first
             ipaddress.ip_address(target)
-            return True # It's a valid IP
+            return True # It's a valid IP, no DNS check needed.
         except ValueError:
-            # Not an IP, so try DNS resolution
-            try:
-                resolver = dns.resolver.Resolver()
-                resolver.timeout = config.timeout
-                resolver.lifetime = config.timeout
-                resolver.resolve(target)
-                return True # DNS resolved successfully
-            except dns.resolver.NXDOMAIN:
-                return self._handle_dns_error("does not exist", target)
-            except dns.resolver.Timeout:
-                return self._handle_dns_error("timed out", target)
-            except dns.resolver.NoAnswer:
-                return self._handle_dns_error("no answer", target)
-            except Exception as e:
-                # Catch other DNS specific errors
-                return self._handle_dns_error("DNS resolution error", target, e)
+            # Not an IP, so proceed with DNS resolution.
+            pass # Continue to the DNS check below
         except Exception as e:
-            # Catch broader errors during the IP check or resolver setup
-            return self._handle_dns_error("general verification error", target, e)
+             # Catch any other unexpected errors during IP check
+             return self._handle_dns_error("general verification error during IP check", target, e)
+
+        # If it wasn't a valid IP, try DNS resolution.
+        try:
+            resolver = dns.resolver.Resolver()
+            resolver.timeout = config.timeout
+            resolver.lifetime = config.timeout
+            resolver.resolve(target)
+            return True # DNS resolved successfully
+        except dns.resolver.NXDOMAIN:
+            return self._handle_dns_error("does not exist", target)
+        except dns.resolver.Timeout:
+            return self._handle_dns_error("timed out", target)
+        except dns.resolver.NoAnswer:
+            return self._handle_dns_error("no answer", target)
+        except dns.resolver.NoNameservers:
+             return self._handle_dns_error("no nameservers available", target)
+        except dns.exception.DNSException as e:
+             # Catch specific DNS exceptions first
+             return self._handle_dns_error("DNS resolution error", target, e)
+        except Exception as e:
+             # Catch broader errors during the resolver setup or resolution
+             return self._handle_dns_error("general verification error during DNS resolution", target, e)
 
     def _scan_port(self, target: str, port: int, timeout: float, scan_type: str) -> Tuple[bool, Optional[str]]:
         """
