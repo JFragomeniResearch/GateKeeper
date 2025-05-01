@@ -618,12 +618,14 @@ class GateKeeper:
 
     def _save_json_results(self, results: Dict[str, Any], filepath: Path) -> None:
         """Save results in JSON format."""
+        # File opening/IO errors handled by _open_file
         with self._open_file(filepath, 'w') as f:
             json.dump(results, f, indent=2)
         self.logger.debug(f"Saved JSON results to {filepath}")
 
     def _save_csv_results(self, results: Dict[str, Any], filepath: Path) -> None:
         """Save results in CSV format."""
+        # File opening/IO errors handled by _open_file
         with self._open_file(filepath, 'w', newline='') as f:
             writer = csv.writer(f)
             writer.writerow(['Port', 'Status'])
@@ -639,6 +641,7 @@ class GateKeeper:
 
     def _save_html_results(self, results: Dict[str, Any], filepath: Path) -> None:
         """Save results in HTML format."""
+        # File opening/IO errors handled by _open_file
         html_template = """<!DOCTYPE html>
 <html>
 <head>
