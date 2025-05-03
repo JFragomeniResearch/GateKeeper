@@ -314,69 +314,6 @@ class GateKeeper:
         except Exception as e:
             return False, str(e)
 
-    def _scan_with_progress(self, target: str, ports: List[int], scan_type: str = "tcp") -> Dict[str, Any]:
-        """Scan ports with progress tracking."""
-        config = self.config_manager.config
-        state = self.config_manager.state
-        
-        open_ports = []
-        closed_ports = []
-        filtered_ports = []
-        error_ports = []
-        total_ports = len(ports)
-        
-        with tqdm(total=total_ports, desc="Scanning ports", unit="port") as progress:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=config.threads) as executor:
-                future_to_port = {
-                    executor.submit(
-                        self._scan_port,
-                        target,
-                        port,
-                        config.timeout,
-                        scan_type
-                    ): port for port in ports
-                }
-                
-                for future in concurrent.futures.as_completed(future_to_port):
-                    port = future_to_port[future]
-                    try:
-                        is_open, error = future.result()
-                        if is_open:
-                            open_ports.append(port)
-                        elif error:
-                            filtered_ports.append(port)
-                            self.logger.debug(f"Port {port} filtered: {error}")
-                        else:
-                            closed_ports.append(port)
-                    except Exception as e:
-                        # Handle errors during the scan of a single port
-                        error_ports.append(port)
-                        self.logger.error(f"Error scanning port {port}: {str(e)}")
-                        self.config_manager.update_state(
-                            error_count=state.error_count + 1
-                        )
-                    finally:
-                         # Ensure progress is updated even if an error occurs
-                        progress.update(1)
-                        if total_ports > 0: # Avoid division by zero
-                            current_progress = progress.n / total_ports
-                            self.config_manager.update_state(progress=current_progress)
-        
-        return {
-            "target": target,
-            "scan_id": state.scan_id,
-            # Ensure start_time exists before accessing isoformat
-            "start_time": state.start_time.isoformat() if state.start_time else None,
-            "end_time": datetime.now().isoformat(),
-            "open_ports": open_ports,
-            "closed_ports": closed_ports,
-            "filtered_ports": filtered_ports,
-            "error_ports": error_ports,
-            "scan_type": scan_type,
-            "threads": config.threads,
-            "timeout": config.timeout
-        }
-
     async def scan_port(self, port: int) -> Optional[Dict]:
         """
         Scan a single port with rate limiting and timeout.
