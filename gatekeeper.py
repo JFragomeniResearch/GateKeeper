@@ -377,10 +377,11 @@ class GateKeeper:
             Optional[bytes]: The probe data as bytes, or None if no probe is needed
         """
         config = self.config_manager.config
-        if port in [80, 443, 8080]:
+        # Use direct `in` check for clarity
+        if port in {80, 443, 8080}:
             # HTTP probe
             return f"GET / HTTP/1.1\r\nHost: {config.target}\r\n\r\n".encode()
-        elif port in [25, 587]:
+        elif port in {25, 587}:
             # SMTP probe
             return b"EHLO gatekeeper.scan\r\n"
         elif port == 21:
