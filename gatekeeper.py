@@ -294,25 +294,58 @@ class GateKeeper:
         """
         try:
             if scan_type == "tcp":
+                # Use context manager for automatic socket closing
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
                     sock.settimeout(timeout)
                     result = sock.connect_ex((target, port))
+                    # result == 0 means open, otherwise closed/filtered
                     return result == 0, None
             elif scan_type == "udp":
+                # UDP scan logic is inherently less reliable than TCP
                 with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
                     sock.settimeout(timeout)
                     try:
+                        # Send empty datagram
                         sock.sendto(b'', (target, port))
-                        data, addr = sock.recvfrom(1024)
-                        return True, None
+                        # Attempt to receive - response indicates open, timeout likely open|filtered
+                        # ICMP Port Unreachable error indicates closed
+                        data, addr = sock.recvfrom(1024) # Blocking call
+                        return True, None # Response received, likely open
                     except socket.timeout:
-                        return False, None
+                        # Timeout usually means open or filtered. Treat as not definitively open.
+                        # Returning specific error string for filtered state.
+                        return False, "filtered (timeout)"
+                    except ConnectionRefusedError:
+                         # Can indicate closed UDP port on some systems (e.g., Windows sending ICMP)
+                         return False, None # Port is closed
+                    except OSError as e:
+                        # Catch specific OS errors like ICMP port unreachable
+                        # Example: Windows may raise WinError 10054
+                        if hasattr(e, 'winerror') and e.winerror == 10054:
+                            return False, None # ICMP Port Unreachable received - closed
+                        else:
+                             # Log unexpected OS errors
+                            self.logger.warning(f"UDP scan OS error for {target}:{port}: {e}")
+                            return False, f"OSError: {str(e)}" 
                     except Exception as e:
-                        return False, str(e)
+                        # Catch other unexpected errors during UDP send/recv
+                        self.logger.warning(f"Unexpected UDP scan error for {target}:{port}: {e}")
+                        return False, f"UDP Error: {str(e)}"
             else:
+                # Should not happen if validated earlier, but good practice
                 raise ValueError(f"Unsupported scan type: {scan_type}")
+        except socket.gaierror as e:
+            # Handle DNS resolution or address-related errors
+            self.logger.error(f"Address resolution error for target '{target}': {e}")
+            return False, f"Address Error: {e}"
+        except socket.error as e:
+            # Catch other socket-level errors (e.g., permission denied to bind/listen)
+            self.logger.error(f"Socket error scanning {target}:{port}: {e}")
+            return False, f"Socket Error: {str(e)}"
         except Exception as e:
-            return False, str(e)
+            # Catch-all for any other unexpected errors during the scan process
+            self.logger.error(f"Unexpected error scanning {target}:{port}: {e}")
+            return False, f"Scan Error: {str(e)}"
 
     async def scan_port(self, port: int) -> Optional[Dict]:
         """
