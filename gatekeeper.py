@@ -871,8 +871,8 @@ class GateKeeper:
         Raises:
             ValueError: If any port is invalid or out of range
         """
-        config = self.config_manager.config
-        state = self.config_manager.state
+        # config = self.config_manager.config # Not used
+        # state = self.config_manager.state # Not used directly here for ValueError handling
         
         parsed_ports = []
         try:
@@ -883,12 +883,14 @@ class GateKeeper:
                     continue 
                 if '-' in part:
                     # Handle port range
+                    # _parse_port_range will call _validate_port which handles logging/state for ValueError
                     parsed_ports.extend(self._parse_port_range(part))
                 else:
                     # Handle single port
-                    port = int(part)
-                    self._validate_port(port)
-                    parsed_ports.append(port)
+                    port_num = int(part) # Can raise ValueError if not an int
+                    # _validate_port handles logging/state for its own ValueErrors
+                    self._validate_port(port_num)
+                    parsed_ports.append(port_num)
             
             # Remove duplicates and sort
             result = sorted(set(parsed_ports))
@@ -898,18 +900,18 @@ class GateKeeper:
             
             return result
             
-        except ValueError as ve:
-            # Catch specific errors from int() or _validate_port/_parse_port_range
-            self.logger.error(f"Error parsing ports ('{ports}'): {str(ve)}")
-            self.config_manager.update_state(
-                error_count=state.error_count + 1
-            )
-            raise # Re-raise after logging
+        except ValueError:
+            # ValueErrors from int(), _parse_port_range, or _validate_port are already
+            # logged and state updated by _validate_port (if applicable for port value errors).
+            # Simply re-raise. The initial int() conversion error won't be logged by helpers,
+            # but the top-level handler in main() or scan_target() will catch it.
+            raise
         except Exception as e:
             # Catch unexpected errors during parsing
+            # This remains to catch other non-ValueError exceptions during the process.
             self.logger.error(f"Unexpected error parsing ports ('{ports}'): {str(e)}")
             self.config_manager.update_state(
-                error_count=state.error_count + 1
+                error_count=self.config_manager.state.error_count + 1 # Use self.config_manager.state here
             )
             raise # Re-raise after logging
 
