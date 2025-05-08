@@ -805,7 +805,7 @@ class GateKeeper:
 
     def _validate_port(self, port: int, context: str = None) -> None:
         """Validate a port number."""
-        config = self.config_manager.config
+        # config = self.config_manager.config # Unused variable
         state = self.config_manager.state
         
         try:
@@ -823,7 +823,7 @@ class GateKeeper:
                     warning_count=state.warning_count + 1
                 )
             
-        except Exception as e:
+        except ValueError as e: # Catch ValueError specifically
             error_msg = f"Invalid port {port}"
             if context:
                 error_msg += f" in {context}"
