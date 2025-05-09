@@ -684,33 +684,45 @@ class GateKeeper:
 
     def compare_reports(self, report1: str, report2: str) -> None:
         """Compare two scan reports."""
-        config = self.config_manager.config
+        # config = self.config_manager.config # Unused
         state = self.config_manager.state
         
         try:
-            # Load the reports
             report1_path = Path(report1)
             report2_path = Path(report2)
             
-            if not report1_path.exists() or not report2_path.exists():
-                self.logger.error("One or both report files do not exist")
-                self.config_manager.update_state(
-                    error_count=state.error_count + 1
-                )
+            if not report1_path.exists():
+                self.logger.error(f"Report file does not exist: {report1_path}")
+                self.config_manager.update_state(error_count=state.error_count + 1)
+                return
+            if not report2_path.exists():
+                self.logger.error(f"Report file does not exist: {report2_path}")
+                self.config_manager.update_state(error_count=state.error_count + 1)
                 return
             
-            # Read and parse the reports
-            report1_data = json.loads(self._read_file(report1_path))
-            report2_data = json.loads(self._read_file(report2_path))
-            
-            if not report1_data or not report2_data:
-                self.logger.error("Failed to parse one or both reports")
-                self.config_manager.update_state(
-                    error_count=state.error_count + 1
-                )
+            # Read report contents. _read_file logs errors and returns None on failure.
+            report1_content = self._read_file(report1_path)
+            if report1_content is None:
+                # Error already logged by _read_file. No need to log again.
+                return
+
+            report2_content = self._read_file(report2_path)
+            if report2_content is None:
+                # Error already logged by _read_file.
                 return
             
-            # Compare the reports
+            # Parse JSON data
+            try:
+                report1_data = json.loads(report1_content)
+                report2_data = json.loads(report2_content)
+            except json.JSONDecodeError as je:
+                self.logger.error(f"Error parsing JSON from one or both reports: {str(je)}")
+                # It might be useful to indicate which file failed if we parse them separately
+                # For now, a general message. Both files must be valid JSON to compare.
+                self.config_manager.update_state(error_count=state.error_count + 1)
+                return
+
+            # Compare the reports using the ReportComparer instance
             differences = self.report_comparer.compare_reports(report1_data, report2_data)
             
             # Display the differences
@@ -722,10 +734,10 @@ class GateKeeper:
                 self.logger.info("No differences found between reports")
             
         except Exception as e:
+            # Catch any other unexpected errors during the comparison process
             self.logger.error(f"Error comparing reports: {str(e)}")
-            self.config_manager.update_state(
-                error_count=state.error_count + 1
-            )
+            self.config_manager.update_state(error_count=state.error_count + 1)
+            # No explicit return here, so it implicitly returns None on such an error.
 
     def list_available_reports(self) -> None:
         """List available scan reports."""
