@@ -776,29 +776,31 @@ class GateKeeper:
 
     def analyze_port_behavior(self, report_file: str) -> None:
         """Analyze port behavior from a scan report."""
-        config = self.config_manager.config
+        # config = self.config_manager.config # Unused
         state = self.config_manager.state
         
         try:
-            # Load the report
             report_path = Path(report_file)
             if not report_path.exists():
                 self.logger.error(f"Report file not found: {report_file}")
-                self.config_manager.update_state(
-                    error_count=state.error_count + 1
-                )
+                self.config_manager.update_state(error_count=state.error_count + 1)
                 return
             
-            # Read and parse the report
-            report_data = json.loads(self._read_file(report_path))
-            if not report_data:
-                self.logger.error("Failed to parse report")
-                self.config_manager.update_state(
-                    error_count=state.error_count + 1
-                )
+            # Read report content. _read_file logs errors and returns None on failure.
+            report_content = self._read_file(report_path)
+            if report_content is None:
+                # Error already logged by _read_file.
                 return
             
-            # Analyze port behavior
+            # Parse JSON data
+            try:
+                report_data = json.loads(report_content)
+            except json.JSONDecodeError as je:
+                self.logger.error(f"Error parsing JSON from report '{report_file}': {str(je)}")
+                self.config_manager.update_state(error_count=state.error_count + 1)
+                return
+            
+            # Analyze port behavior using the PortBehaviorAnalyzer instance
             analysis = self.port_analyzer.analyze(report_data)
             
             # Display the analysis
@@ -810,10 +812,10 @@ class GateKeeper:
                 self.logger.info("No significant port behavior patterns found")
             
         except Exception as e:
-            self.logger.error(f"Error analyzing port behavior: {str(e)}")
-            self.config_manager.update_state(
-                error_count=state.error_count + 1
-            )
+            # Catch any other unexpected errors during the analysis process
+            self.logger.error(f"Error analyzing port behavior for '{report_file}': {str(e)}")
+            self.config_manager.update_state(error_count=state.error_count + 1)
+            # Implicitly returns None on such an error.
 
     def _validate_port(self, port: int, context: str = None) -> None:
         """Validate a port number."""
