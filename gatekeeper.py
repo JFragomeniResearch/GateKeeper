@@ -10,7 +10,7 @@ import logging
 import logging.handlers
 import time
 import dns.resolver  # for DNS verification
-from cryptography.fernet import Fernet  # for encryption
+from cryptography.fernet import Fernet, InvalidToken  # for encryption
 import json
 from typing import List, Tuple, Dict, Optional, Any, TextIO, BinaryIO, Union, ContextManager
 from utils.banner import display_banner, display_scan_start, display_scan_complete
@@ -167,9 +167,17 @@ class GateKeeper:
         if encrypted_content is None:
             return None # Handled by decorator, but explicit return helps clarity
         
-        # Decrypt the content
         fernet = Fernet(config.encryption_key)
-        return fernet.decrypt(encrypted_content)
+        try:
+            # Decrypt the content
+            return fernet.decrypt(encrypted_content)
+        except InvalidToken as ite:
+            # Log a more specific error for invalid token or corrupted data
+            self.logger.warning(
+                f"Decryption failed for file '{filepath}' due to an invalid token or corrupted data. "
+                f"This usually means the file is not a valid encrypted file or the key is incorrect. Details: {str(ite)}"
+            )
+            raise # Re-raise for the decorator to handle error counting and return None
 
     def _setup_logging(self) -> logging.Logger:
         """Set up logging configuration."""
