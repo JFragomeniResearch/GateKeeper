@@ -90,94 +90,86 @@ class GateKeeper:
         
     def _generate_encryption_key(self) -> bytes:
         """Generate a new encryption key."""
-        config = self.config_manager.config
-        state = self.config_manager.state
-        
         try:
-            # Generate a new key
             key = Fernet.generate_key()
-            
-            # Update configuration
-            self.config_manager.update_config(encryption_key=key)
-            
             self.logger.info("Generated new encryption key")
             return key
-            
         except Exception as e:
             self.logger.error(f"Error generating encryption key: {str(e)}")
             self.config_manager.update_state(
-                error_count=state.error_count + 1
+                error_count=self.config_manager.state.error_count + 1
             )
             raise
 
-    def _handle_encryption_errors(self, func):
-        """Decorator to handle common errors in encryption/decryption methods."""
-        @functools.wraps(func)
-        def wrapper(self, filepath: Union[str, Path], *args, **kwargs):
-            config = self.config_manager.config
-            state = self.config_manager.state
-            
-            # Determine default return value based on function name
-            default_return = False if 'encrypt' in func.__name__ else None
-            
-            if not config.encryption_key:
-                self.logger.error("No encryption key configured")
-                self.config_manager.update_state(
-                    error_count=state.error_count + 1
-                )
-                return default_return
-            
-            try:
-                return func(self, filepath, *args, **kwargs)
-            except Exception as e:
-                action = "encrypting" if 'encrypt' in func.__name__ else "decrypting"
-                self.logger.error(f"Error {action} file {filepath}: {str(e)}")
-                self.config_manager.update_state(
-                    error_count=state.error_count + 1
-                )
-                return default_return
-            
-        return wrapper
-
-    @_handle_encryption_errors
     def _encrypt_file(self, filepath: Union[str, Path]) -> bool:
         """Encrypt a file using the configured encryption key."""
         config = self.config_manager.config
+        state = self.config_manager.state
         
-        # Read the file content
-        content = self._read_file(filepath, binary=True)
-        if content is None:
-            return False # Handled by decorator, but explicit return helps clarity
+        # Check if encryption key is available
+        if not config.encryption_key:
+            self.logger.error("No encryption key configured")
+            self.config_manager.update_state(
+                error_count=state.error_count + 1
+            )
+            return False
         
-        # Encrypt the content
-        fernet = Fernet(config.encryption_key)
-        encrypted_content = fernet.encrypt(content)
-        
-        # Write the encrypted content
-        encrypted_file = Path(f"{filepath}.enc")
-        return self._write_file(encrypted_file, encrypted_content, binary=True)
+        try:
+            # Read the file content
+            content = self._read_file(filepath, binary=True)
+            if content is None:
+                return False
+            
+            # Encrypt the content
+            fernet = Fernet(config.encryption_key)
+            encrypted_content = fernet.encrypt(content)
+            
+            # Write the encrypted content
+            encrypted_file = Path(f"{filepath}.enc")
+            return self._write_file(encrypted_file, encrypted_content, binary=True)
+        except Exception as e:
+            self.logger.error(f"Error encrypting file {filepath}: {str(e)}")
+            self.config_manager.update_state(
+                error_count=state.error_count + 1
+            )
+            return False
 
-    @_handle_encryption_errors
     def _decrypt_file(self, filepath: Union[str, Path]) -> Optional[bytes]:
         """Decrypt a file using the configured encryption key."""
         config = self.config_manager.config
+        state = self.config_manager.state
         
-        # Read the encrypted content
-        encrypted_content = self._read_file(filepath, binary=True)
-        if encrypted_content is None:
-            return None # Handled by decorator, but explicit return helps clarity
-        
-        fernet = Fernet(config.encryption_key)
-        try:
-            # Decrypt the content
-            return fernet.decrypt(encrypted_content)
-        except InvalidToken as ite:
-            # Log a more specific error for invalid token or corrupted data
-            self.logger.warning(
-                f"Decryption failed for file '{filepath}' due to an invalid token or corrupted data. "
-                f"This usually means the file is not a valid encrypted file or the key is incorrect. Details: {str(ite)}"
+        # Check if encryption key is available
+        if not config.encryption_key:
+            self.logger.error("No encryption key configured")
+            self.config_manager.update_state(
+                error_count=state.error_count + 1
             )
-            raise # Re-raise for the decorator to handle error counting and return None
+            return None
+        
+        try:
+            # Read the encrypted content
+            encrypted_content = self._read_file(filepath, binary=True)
+            if encrypted_content is None:
+                return None
+            
+            # Decrypt the content
+            fernet = Fernet(config.encryption_key)
+            try:
+                return fernet.decrypt(encrypted_content)
+            except InvalidToken as ite:
+                # Log a more specific error for invalid token or corrupted data
+                self.logger.warning(
+                    f"Decryption failed for file '{filepath}' due to an invalid token or corrupted data. "
+                    f"This usually means the file is not a valid encrypted file or the key is incorrect. Details: {str(ite)}"
+                )
+                raise # Re-raise to be caught by the outer try-except
+        except Exception as e:
+            self.logger.error(f"Error decrypting file {filepath}: {str(e)}")
+            self.config_manager.update_state(
+                error_count=state.error_count + 1
+            )
+            return None
 
     def _setup_logging(self) -> logging.Logger:
         """Set up logging configuration."""
@@ -263,8 +255,7 @@ class GateKeeper:
             pass # Continue to the DNS check below
         except Exception as e:
              # Catch any other unexpected errors during IP check
-             # Note: _handle_dns_error will categorize based on exception
-             return self._handle_dns_error(target, e) 
+             return self._handle_dns_error(target, e)
 
         # If it wasn't a valid IP, try DNS resolution.
         try:
@@ -992,7 +983,7 @@ class GateKeeper:
         )
         
         if loaded_config: # Check if helper returned a valid config (not None)
-             return loaded_config.get('target'), loaded_config.get('ports', [])
+            return loaded_config.get('target'), loaded_config.get('ports', [])
         else:
             # Helper returned failure_return_value (None); return the expected failure tuple
             return None, []
