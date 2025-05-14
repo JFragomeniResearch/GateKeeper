@@ -492,11 +492,16 @@ class GateKeeper:
         Returns:
             Dict[str, str]: Dictionary containing service name and version
         """
-        match = re.search(pattern, response_str)
-        return {
-            "name": service_name,
-            "version": match.group(1) if match else ""
-        }
+        try:
+            match = re.search(pattern, response_str)
+            version = match.group(1).strip() if match else ""
+            return {"name": service_name, "version": version}
+        except (AttributeError, IndexError) as e:
+            self.logger.debug(f"Failed to extract {service_name} version: {e}")
+            return {"name": service_name, "version": ""}
+        except Exception as e:
+            self.logger.warning(f"Unexpected error extracting {service_name} version: {e}")
+            return {"name": service_name, "version": ""}
             
     def _extract_http_info(self, response_str: str) -> Dict[str, str]:
         """Extract HTTP server information from response."""
