@@ -1161,7 +1161,7 @@ class GateKeeper:
             for result in notification_results:
                 if result.get('success'):
                     self.logger.info(f"Notification sent: {result.get('message')}")
-            else:
+                else:
                     self.logger.error(f"Notification failed: {result.get('error')}")
                     self.config_manager.update_state(
                         error_count=state.error_count + 1
@@ -1278,7 +1278,9 @@ class GateKeeper:
     def _handle_scan_command(self, args: argparse.Namespace) -> None:
         """Handle the 'scan' command."""
         ports = self.parse_ports(args.ports)
-        self.scan_target(
+        
+        # Prepare scan results
+        results = self.scan_target(
             target=args.target,
             ports=ports,
             threads=args.threads,
@@ -1286,8 +1288,12 @@ class GateKeeper:
             scan_type=args.scan_type,
             policy_name=args.policy,
             group_name=args.group
-            # TODO: Add notification handling based on args.notify?
         )
+        
+        # Handle notifications if requested via the --notify flag
+        if args.notify and results:
+            self.logger.info("Processing notifications as requested via --notify flag")
+            self._process_notifications(results)
 
     def _handle_policies_command(self, args: argparse.Namespace) -> None:
         """Handle the 'policies' command and its subcommands."""
