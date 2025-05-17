@@ -447,6 +447,16 @@ class GateKeeper:
         config = self.config_manager.config
         service_info = {"name": self.common_ports.get(port, f"Unknown-{port}"), "version": ""}
 
+        # Service signatures mapping pattern to extraction method
+        service_signatures = {
+            (b"HTTP/", None): self._extract_http_info,
+            (b"SSH-", None): self._extract_ssh_info,
+            (b"FTP", None): self._extract_ftp_info,
+            (b"220", lambda r, p: b"ftp" in r.lower() or p == 21): self._extract_ftp_info,
+            (b"220", lambda r, p: b"mail" in r.lower()): self._extract_smtp_info,
+            (b"mysql", lambda r, p: p == 3306): self._extract_mysql_info,
+        }
+
         reader = None # Initialize reader/writer to ensure they exist in finally block
         writer = None
         try:
@@ -462,18 +472,11 @@ class GateKeeper:
             response = await asyncio.wait_for(reader.read(1024), timeout=config.timeout)
             response_str = response.decode('utf-8', errors='ignore')
 
-            # --- Identify service based on response ---
-            if b"HTTP/" in response:
-                service_info = self._extract_http_info(response_str)
-            elif b"SSH-" in response:
-                service_info = self._extract_ssh_info(response_str)
-            elif b"FTP" in response or (b"220" in response and (b"ftp" in response.lower() or port == 21)):
-                service_info = self._extract_ftp_info(response_str)
-            elif b"SMTP" in response or (b"220" in response and b"mail" in response.lower()):
-                service_info = self._extract_smtp_info(response_str)
-            elif b"mysql" in response.lower() or port == 3306:
-                service_info = self._extract_mysql_info(response_str)
-            # --- End service identification ---
+            # Identify service based on signatures
+            for (signature, condition), extract_method in service_signatures.items():
+                if signature in response and (condition is None or condition(response, port)):
+                    service_info = extract_method(response_str)
+                    break
 
         except asyncio.TimeoutError:
             # Timeout reading response or connecting
